@@ -1,0 +1,41 @@
+# Example Docker Compose file for steward-ai.
+#
+#   cp deploy/compose.example.yaml compose.yaml
+#   cp deploy/example.env .env          # then edit .env
+#   docker compose up -d
+#
+# NOTE: pre-alpha. The image builds, but the `api` and `worker` commands arrive in
+# Phase 1; until then the containers only print the CLI help and exit.
+#
+# Each library is ONE bind mount: read-write for steward-api (only its executor lane
+# writes), read-only for steward-worker. Don't split a library into several mounts:
+# moves between separate mounts fail even on the same disk.
+
+services:
+  steward-api:
+    image: steward:${STEWARD_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    command: ["steward", "api"]
+    ports:
+      - "${STEWARD_PORT:-8420}:8420"
+    user: "${PUID:-1000}:${PGID:-1000}"
+    volumes:
+      - ./config:/config
+      - ${STEWARD_DATA:-./data}:/data
+      - ${LIBRARY_1:?set LIBRARY_1 in .env}:/libraries/main
+    restart: unless-stopped
+
+  steward-worker:
+    image: steward:${STEWARD_VERSION:-dev}
+    command: ["steward", "worker"]
+    user: "${PUID:-1000}:${PGID:-1000}"
+    volumes:
+      - ./config:/config:ro
+      - ${STEWARD_DATA:-./data}:/data
+      - ${LIBRARY_1:?set LIBRARY_1 in .env}:/libraries/main:ro
+    deploy:
+      resources:
+        limits: { cpus: "4", memory: 4g }
+    restart: unless-stopped

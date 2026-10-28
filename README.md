@@ -1,8 +1,9 @@
 # steward-ai
 
-> **Status: pre-alpha, design stage. There is no runnable code yet.** This README
-> describes what steward-ai is being built to do. Sections marked *(planned)* aren't
-> implemented.
+> **Status: pre-alpha.** The foundation is in place (the module system and the
+> project tooling), but there is nothing usable yet: no web UI, no indexing, no chat.
+> This README describes what steward-ai is being built to do. Sections marked
+> *(planned)* aren't implemented.
 
 steward-ai is a self-hosted AI steward for the files on your server. It indexes and
 tags your files, answers questions about them with citations, and can reorganize,
@@ -53,7 +54,8 @@ its type.
 ### Setup *(planned; not available yet)*
 ```sh
 git clone <repository-url> steward && cd steward
-cp deploy/compose.example.yaml compose.yaml   # choose folders to mount, data dir, port
+cp deploy/compose.example.yaml compose.yaml
+cp deploy/example.env .env                    # choose the folder to manage, data dir, port
 docker compose up -d
 docker compose logs steward-api | grep "setup token"
 # open http://<your-server>:8420/setup, paste the token, follow the wizard
@@ -66,8 +68,23 @@ Each is a module you can turn on or off: OpenAI-compatible chat clients (includi
 Open WebUI), Immich, other file managers (File Browser first), cloud models, MCP,
 notifications, single sign-on through a reverse proxy, and more.
 
+### Development
+You need [uv](https://docs.astral.sh/uv/) and `make` (Docker for the image).
+
+```sh
+make sync      # create .venv with all dependencies (uv downloads Python 3.13 if needed)
+make check     # lint, type-check, import contracts, tests, license checks (CI runs this)
+make format    # auto-fix formatting
+uv run steward modules   # list installed modules and what they register
+make image     # build the Docker image as steward:dev
+```
+
+To write a module, see [docs/modules.md](docs/modules.md). Design decisions are
+recorded in [docs/adr/](docs/adr/). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ### License
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Third-party licenses are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and included in the image under `/licenses/`.
 
 ---
 
@@ -80,8 +97,54 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
-- No code yet. Next milestone: **Phase 0**, the repository skeleton (see "Roadmap").
-- Nothing in "Architecture" below exists yet; it's the agreed design to implement.
+- **Phase 0 (foundation) is done.** What exists: the project tooling, `steward.sdk`
+  (module contract + registry + health checks), the module loader, a minimal CLI, an
+  example out-of-tree module, the Dockerfile and compose example, ADRs 0001–0006.
+- **Next: Phase 1 (core)**: config files, the two databases and migrations, job queue,
+  events, libraries and folder types, discovery, auth, setup wizard, privacy gateway,
+  executor + journal, keyword search, backup/export, and the `api`/`worker` commands.
+- Everything in "Architecture" beyond the module system is still the agreed design,
+  not code.
+
+### What exists, file by file
+| Path | What it is |
+|---|---|
+| `pyproject.toml` | Project `steward-ai` (import package `steward`, CLI `steward`); deps `pydantic`, `typer`; dev group; uv workspace with `examples/hello-module`; ruff, mypy (strict), pytest and import-linter config |
+| `uv.lock`, `.python-version` (3.13) | Locked dependencies; dev Python |
+| `Makefile` | `sync`, `check` (= `lint typecheck imports test headers licenses`), `format`, `notices`, `image`, `clean` |
+| `src/steward/__init__.py` | `__version__` from package metadata |
+| `src/steward/sdk/module.py` | `Module` protocol (ClassVars `name`, `version`, `kind`, `requires`, `config_model`; method `register(r)`), `ModuleKind`, `ModuleConfig` (Pydantic, `extra="forbid"`, frozen), `MODULE_NAME_PATTERN` |
+| `src/steward/sdk/registry.py` | `Registry` (per-module handle: `.module`, `.config`, `.config_as(Model)`, `.health_check(name, fn)`, private `_add(point, name, item)`), `Registrations` (shared store; `at(point)`, `by_module`, `health_checks()`), `Registration`, `RegistrationConflict` |
+| `src/steward/sdk/health.py` | `HealthResult(status, detail)`, `HealthStatus` (`ok`/`warn`/`fail`), `HealthCheck` (async no-arg callable) |
+| `src/steward/core/loader/loader.py` | `discover()` (entry points, no imports), `load_modules(enabled, entry_points=None)` → `LoadedModules(modules, registrations)`; error classes, all subclasses of `ModuleLoadError` |
+| `src/steward/modules/` | Built-in modules go here (none yet) |
+| `src/steward/cli.py` | Typer app: `steward version`, `steward modules` (loads every installed module with default config) |
+| `examples/hello-module/` | Out-of-tree module `hello` (dist `steward-hello`): config `greeting`, registers health check `hello`. Dev dependency only; not in the image |
+| `tests/unit/` | Loader (fake entry points) and registry tests |
+| `tests/integration/test_module_discovery.py` | Phase 0 acceptance: real entry-point discovery of `hello`, CLI output |
+| `scripts/check_headers.py` | Fails if a `.py` file doesn't start with the SPDX line |
+| `deploy/Dockerfile` | Multi-stage, base images pinned by digest, `uv sync --locked --no-dev`, venv at `/opt/venv`, runs as 1000:1000, license texts in `/licenses/`, default `CMD steward --help` |
+| `deploy/compose.example.yaml`, `deploy/example.env` | Generic two-service compose (api + read-only worker); `api`/`worker` commands don't exist until Phase 1 |
+| `.github/workflows/ci.yml` | `make check` and an image build; actions pinned by commit SHA |
+| `docs/adr/` | ADRs 0001–0006, index, template |
+| `docs/modules.md` | Module authoring guide |
+| `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | Keep a Changelog; generated by `make notices` |
+
+### Module system (implemented)
+- Entry-point group `steward.modules`; entry-point name = module name; value =
+  `package:Class`. The loader instantiates the class with no arguments.
+- Module names are snake_case (`^[a-z][a-z0-9_]*$`): same string for entry point,
+  package, config key and table prefix.
+- `load_modules({name: raw_config_or_None})` fails closed with: `UnknownModuleError`,
+  `DuplicateModuleError`, `InvalidModuleError` (import failure, not a class, contract
+  mismatch, bad kind/requires/config_model, requires itself), `MissingDependencyError`,
+  `DependencyCycleError`, `ModuleConfigError`, `RegistrationError` (conflict or
+  exception in `register`). Disabled modules are never imported. Registration order is
+  topological, alphabetical among equals.
+- Adding an extension point: add the interface to `steward.sdk`, a typed method on
+  `Registry` that calls `self._add("<point>", name, item)`, a typed accessor on
+  `Registrations` if the core needs one, re-export it in `steward/sdk/__init__.py`,
+  tests, and a row in `docs/modules.md`.
 
 ### Architecture (agreed design)
 - **Two processes, one image:** `steward api` (web UI, login, `/api/v1`, public share
@@ -128,8 +191,20 @@ steps, log). Read them first if present. A maintainer-only design document
   setup token printed in the log.
 
 ### Conventions and rules
-- Modules import only `steward.sdk` and themselves (import-linter). Only `core.llm`
-  imports the `openai` SDK. Only `core.executor` writes library files.
+- Every `.py` file starts with `# SPDX-License-Identifier: Apache-2.0` then
+  a `# Copyright <year> <holder>` line matching `NOTICE` (the SPDX line is checked by
+  `make headers`).
+- `make check` must pass before committing. mypy is strict everywhere; ruff rules
+  `E F W I B UP SIM RUF PT S`, line length 100.
+- Import contracts (import-linter, `pyproject.toml`): `steward.sdk` imports nothing else
+  from steward; `steward.modules` and out-of-tree modules don't import `steward.core` or
+  `steward.cli`; `steward.core` never imports modules. Planned when the code exists:
+  only `core.llm` imports `openai`; `core.domain` imports nothing internal.
+  Only `core.executor` writes library files.
+- Runtime dependencies must pass the license allow-list (`ALLOWED_LICENSES` in the
+  Makefile); run `make notices` after changing dependencies.
+- Record changes in `CHANGELOG.md` under "Unreleased"; decisions with long-term weight
+  get an ADR in `docs/adr/`.
 - No code refers to a folder by name or position; read behavior from folder types.
 - Module tables are prefixed `<module>_` with their own Alembic branch; irreplaceable
   module data registers an `Exporter`.
@@ -138,7 +213,7 @@ steps, log). Read them first if present. A maintainer-only design document
 - No personal or deployment-specific details in tracked files; use placeholders.
 - Update this README (both sections) whenever the code changes.
 
-### Planned repository layout
+### Planned repository layout (target; see the table above for what exists)
 ```
 src/steward/
   sdk/        public interfaces, Registry, events, testing/ (contract suites)
@@ -153,13 +228,13 @@ evals/   config/*.example.yaml
 ```
 
 ### Tech stack
-Python 3.12+, uv, FastAPI, Pydantic v2, SQLAlchemy 2 Core + Alembic, SQLite (WAL) with
+Python 3.12+ (3.13 in the image and for development), uv, FastAPI, Pydantic v2, SQLAlchemy 2 Core + Alembic, SQLite (WAL) with
 FTS5 and sqlite-vec, `openai` SDK against OpenAI-compatible endpoints, watchdog,
 BLAKE3, pypdf + docling, ocrmypdf + Tesseract, exiftool, argon2-cffi, Jinja2 + htmx,
 Typer, pytest + hypothesis, ruff, mypy, import-linter.
 
 ### Roadmap
-0. Foundation: repo skeleton, SDK `Module`/`Registry`, module loader, ADRs, license.
+0. ~~Foundation: repo skeleton, SDK `Module`/`Registry`, module loader, ADRs, license.~~ Done.
 1. Core: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
 2. File manager, Locked Folder, built-in shares.
@@ -170,4 +245,13 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 7. Later modules (`remote_llm`, file-manager integrations, `mcp`, `notify`, SSO, 2FA, …).
 
 ### Commands
-None yet. This section will list setup, `make check`, test and run commands once Phase 0 lands.
+```sh
+make sync                       # uv sync --locked (dev deps + example module)
+make check                      # lint typecheck imports test headers licenses
+make format                     # ruff format + ruff check --fix
+uv run pytest tests/unit -q     # a subset of tests
+uv run steward modules          # list installed modules and registrations
+make notices                    # regenerate THIRD_PARTY_NOTICES.md
+make image && docker run --rm steward:dev steward version
+```
+uv may be installed at `~/.local/bin/uv`; make sure it's on `PATH`.

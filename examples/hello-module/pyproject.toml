@@ -1,0 +1,19 @@
+[project]
+name = "steward-hello"
+version = "0.1.0"
+description = "A minimal out-of-tree steward-ai module: a template and the loader's test module."
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = ["steward-ai"]
+
+# This line is what makes steward find the module: group "steward.modules",
+# entry-point name = module name, value = the module class.
+[project.entry-points."steward.modules"]
+hello = "steward_hello:HelloModule"
+
+[tool.uv.sources]
+steward-ai = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.8,<0.14"]
+build-backend = "uv_build"

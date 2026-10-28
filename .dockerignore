@@ -1,0 +1,26 @@
+# Only what the image needs. Agent files and the maintainer plan never enter the image.
+.git
+.github
+.venv
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.import_linter_cache
+dist
+build
+data
+config/*.yaml
+!config/*.example.yaml
+.env
+compose.yaml
+plan.md
+CLAUDE.md
+CLAUDE.local.md
+**/CLAUDE.md
+**/CLAUDE.local.md
+claude-handoff.md
+.claude
+tests
+docs
