@@ -258,12 +258,18 @@ def test_a_reused_inode_does_not_hand_over_a_mapping(env: Env, lib: Path) -> Non
     env.scan()
     shutil.rmtree(lib / "Private")
     write(lib / "Public" / "b.txt", "public")
-    # Pretend the filesystem reused the deleted folder's inode for the new one.
+    # Pretend the filesystem reused the deleted folder's inode for the new one, and the
+    # deleted file's inode for the new file (CI's filesystem really does the latter).
     with env.runtime.dbs.state.write() as conn:
         conn.execute(
             update(folders)
             .where(folders.c.relpath == "Private")
             .values(inode=os.stat(lib / "Public").st_ino)
+        )
+        conn.execute(
+            update(files)
+            .where(files.c.relpath == "Private/a.txt")
+            .values(inode=os.stat(lib / "Public" / "b.txt").st_ino)
         )
     report = env.scan()
     assert "folders_moved" not in report

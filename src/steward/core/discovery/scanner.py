@@ -7,8 +7,9 @@ A scan walks a library (or part of one), then:
 1. **Folders**, shallowest first. A folder with no identity at its path that has the
    inode of a folder that's gone from its old path is a rename or move: its identity
    (and with it the mapping, lock and roles, and the files inside) follows it
-   (`store.move_folder`). If the old folder had files, at least one of them must be
-   in the new one too, so a reused inode can't hand a mapping to an unrelated folder.
+   (`store.move_folder`). If the old folder had files, at least one of them (same
+   inode, size and mtime) must be in the new one too, so reused inodes can't hand a
+   mapping to an unrelated folder.
 2. **Files.** Same path: unchanged if size, mtime and inode match, otherwise re-hashed
    (an edit keeps its `file_id`). New path: a vanished file with the same inode, size
    and mtime is a rename (no re-hash); otherwise the file is hashed and a vanished
@@ -290,7 +291,7 @@ class Scanner:
     # --- folders --------------------------------------------------------------------
 
     def _folders(self, library_id: str, root: Path, walk: _Walk, report: ScanReport) -> None:
-        file_inodes = {f.inode: path for path, f in walk.files.items()}
+        file_inodes = {(f.inode, f.size, f.mtime_ns): path for path, f in walk.files.items()}
         ordered = sorted(walk.dirs.items(), key=lambda kv: (kv[0].count("/"), kv[0]))
         for batch in _chunks(ordered, BATCH):
             now = self.clock()
@@ -343,7 +344,7 @@ class Scanner:
         root: Path,
         relpath: str,
         inode: int,
-        file_inodes: dict[int, str],
+        file_inodes: dict[tuple[int, int, int], str],
         now: datetime,
     ) -> str | None:
         """The old path of a folder that was renamed or moved to `relpath`, if any."""
@@ -360,14 +361,18 @@ class Scanner:
                 continue
             if not c.present and not self._recent(c.missing_since, now):
                 continue
-            had = conn.execute(
-                select(files.c.inode)
-                .where(*_under(files, library_id, c.relpath), files.c.inode.is_not(None))
-                .limit(5000)
-            ).scalars()
-            had_inodes = set(had)
-            if had_inodes and not any(
-                i in file_inodes and is_within(file_inodes[i], relpath) for i in had_inodes
+            # Matched like files are (inode + size + mtime): filesystems reuse the inodes of
+            # deleted files as readily as those of deleted folders.
+            had = {
+                (r.inode, r.size, r.mtime_ns)
+                for r in conn.execute(
+                    select(files.c.inode, files.c.size, files.c.mtime_ns)
+                    .where(*_under(files, library_id, c.relpath), files.c.inode.is_not(None))
+                    .limit(5000)
+                )
+            }
+            if had and not any(
+                key in file_inodes and is_within(file_inodes[key], relpath) for key in had
             ):
                 continue
             return str(c.relpath)
