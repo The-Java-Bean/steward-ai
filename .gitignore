@@ -1,0 +1,35 @@
+# Planning doc: lives in the maintainer's notes (symlinked here), never committed
+plan.md
+
+# Claude / AI agent files: never committed
+CLAUDE.md
+CLAUDE.local.md
+claude-handoff.md
+.claude/
+**/CLAUDE.md
+**/CLAUDE.local.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Local runtime data and config
+/data/
+/config/*.yaml
+!/config/*.example.yaml
+.env
+compose.yaml
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
