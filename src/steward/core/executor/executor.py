@@ -41,7 +41,7 @@ from steward.core.folders import store as folder_store
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import Policy
 from steward.core.folders.store import load_policy
-from steward.sdk import ActionRefused, ActionType, Applied, Plan, Rendered
+from steward.sdk import ActionRefused, ActionType, Applied, PathState, Plan, Rendered
 
 log = logging.getLogger(__name__)
 
@@ -187,8 +187,7 @@ class Executor:
             actual = view.state(want.path, content_hash=want.content_hash is not None)
             if not want.satisfied_by(actual):
                 raise ActionRefused(
-                    f"{want.path} changed since the action was planned "
-                    f"(expected {want.kind}, found {actual.kind})"
+                    f"{want.path} changed since the action was planned ({_drift(want, actual)})"
                 )
 
         fs = Guarded(view.policy, self.dbs.state, self.clock)
@@ -425,3 +424,12 @@ def _entry(row: Any) -> JournalEntry:
         undone_by=row.undone_by,
         proposal_id=row.proposal_id,
     )
+
+
+def _drift(want: PathState, actual: PathState) -> str:
+    names = {"file": "a file", "dir": "a folder", "absent": "nothing"}
+    if actual.kind != want.kind:
+        return f"expected {names[want.kind]}, found {names[actual.kind]}"
+    if want.content_hash is not None and actual.content_hash != want.content_hash:
+        return "its content is different"
+    return "its size or modification time is different"

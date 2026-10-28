@@ -8,8 +8,9 @@ Every word of the query must appear in the file's path (case-insensitive); files
 size and modification time.
 
 What can be found depends on the scope, and is decided **in the SQL query**:
-- `normal`: never anything in a locked folder, a hidden folder (`visible: false`), or a
-  folder holding copies of other files (trash, edit backups, `trash`-type folders).
+- `normal`: never anything in a locked folder, a hidden folder (`visible: false`), a
+  folder holding copies of other files (trash, edit backups, `trash`-type folders), or
+  steward-ai's own `.steward` folder.
 - `locked`: only files in locked folders (the Locked Folder view, after a re-auth).
 """
 
@@ -26,6 +27,7 @@ from typing import Any, Literal
 from steward.core.db import Databases
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import COPY_HOLDING_ROLES, Policy
+from steward.core.folders.store import STEWARD_DIR
 
 type Scope = Literal["normal", "locked"]
 
@@ -111,6 +113,8 @@ def hidden_folders(policy: Policy) -> tuple[list[FolderRef], list[FolderRef]]:
     locked: set[FolderRef] = set()
     candidates = {*policy.mappings, *policy.roles.values()}
     candidates.update(FolderRef(lib, "") for lib in policy.libraries)
+    # steward-ai's own folder in each library (default trash and edit backups).
+    hidden.update(FolderRef(lib, STEWARD_DIR) for lib in policy.libraries)
     for ref in candidates:
         if ref.library_id not in policy.libraries:
             continue

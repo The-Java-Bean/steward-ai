@@ -140,8 +140,8 @@ steward files list main:Photos  # known files; --missing for ones that disappear
 steward search invoice 2025     # file names and paths (also /ui/search)
 ```
 
-**Search** finds files whose path contains every word (case and accents as typed are
-ignored), names first, newest first, with filters for kind (document, image, ...),
+**Search** finds files whose path contains every word (case is ignored; accents
+must match), names first, newest first, with filters for kind (document, image, ...),
 library, folder, size and date. Locked folders, hidden folders and the trash are never
 searched there.
 
@@ -549,7 +549,7 @@ steps, log). Read them first if present. A maintainer-only design document
   `require_recent_auth` and retry with `confirmed=True`; CLI is trusted). Actions run
   synchronously under `WRITE_LOCK` in the caller's thread.
 - Visibility: normal views exclude locked, `visible: false`, `trash`-type and
-  copy-holding role folders (outermost refs only), in SQL. Journal entries touching a
+  copy-holding role folders and each library's `.steward` (outermost refs only), in SQL. Journal entries touching a
   locked folder show `LOCKED_SUMMARY` unless the session `is_recent`.
 - API v1 (`api/routes/api_v1.py`, prefix `/api/v1`): `@access("principal")` + `read`
   scope: `GET libraries`, `folders?path=`, `files?path=`, `files/{id}`, `search`

@@ -38,6 +38,7 @@ def runtime(tmp_path: Path) -> Iterator[Runtime]:
         store.upsert_library(conn, "lib", root=str(root), actor=ACTOR)
         store.set_type(conn, FolderRef("lib", "private"), "private", actor=ACTOR)
         store.ensure_default_roles(conn, actor=ACTOR)
+    (root / ".steward/trash").mkdir(parents=True)  # steward-ai's own folder
     Scanner(rt.dbs, DiscoverySettings()).scan("lib")
     make_owner(rt)
     yield rt
