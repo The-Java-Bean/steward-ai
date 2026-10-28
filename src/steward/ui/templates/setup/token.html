@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Set up{% endblock %}
+{% block content %}
+<section class="narrow">
+  <h1>Set up steward-ai</h1>
+  <p>To prove you run this server, paste the <strong>setup token</strong> from the
+  steward-ai log. With Docker Compose:</p>
+  <pre><code>docker compose logs steward-api | grep "setup token"</code></pre>
+  <p class="hint">A new token is printed each time steward-ai starts until setup is done.</p>
+  <form method="post" action="/setup">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Setup token <input name="token" autocomplete="off" spellcheck="false" required autofocus></label>
+    <button type="submit">Continue</button>
+  </form>
+</section>
+{% endblock %}

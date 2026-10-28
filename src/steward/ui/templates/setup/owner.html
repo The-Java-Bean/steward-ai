@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create your account{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<section class="narrow">
+  <h1>Create your account</h1>
+  <p>This is the owner account. There's only one, and it can do everything.</p>
+  <form method="post" action="/setup/owner">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Username <input name="username" value="{{ username or '' }}" autocomplete="username" autocapitalize="none" maxlength="64" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+    <label>Password again <input name="confirm" type="password" autocomplete="new-password" minlength="12" required></label>
+    <p class="hint">At least 12 characters, not a common password and not containing the username.
+    If you forget it, <code>steward user reset-password</code> on the server sets a new one.</p>
+    <button type="submit">Create account</button>
+  </form>
+</section>
+{% endblock %}

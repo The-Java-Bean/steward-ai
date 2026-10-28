@@ -1,0 +1,39 @@
+# folders.yaml: custom folder types, changes to built-in types, folder mappings and
+# roles. Copy to folders.yaml and edit, then run `steward folders import`. Importing
+# only adds and updates; it never removes anything or lifts a permanent lock.
+#
+# Built-in types: general, inbox, documents, media, notes, projects, archive,
+# software, games, private, trash, app-managed, ignored (`steward types list`).
+config_version: 1
+
+types:
+  receipts:                    # a custom type
+    extends: documents         # inherits everything it doesn't set
+    description: Receipts and invoices, one folder per year.
+    default_tags: [finance/receipt]
+    fields: [vendor, amount, date]
+  scans:
+    extends: documents
+    stages: {add: [ocr]}
+  # documents:                 # change a built-in type's settings (no `extends`)
+  #   hash: sampled
+
+# Folders are mapped per library, by path relative to the library root. A folder
+# without a mapping uses its parent's type; a library root defaults to `general`.
+# Restrictions (private, locked, read-only, not shareable, hidden) always carry down
+# into subfolders, whatever those are mapped to.
+mappings:
+  main:
+    Inbox: inbox
+    Documents: documents
+    Documents/Receipts: receipts
+    Photos: media
+    Private:
+      type: private            # locked, local models only
+      permanent: true          # only `steward folders unlock --permanent` can unlock it
+
+# Roles point at one folder each: trash, edit_backups, inbox, digest_output.
+# trash and edit_backups default to hidden folders in the first library
+# (.steward/trash, .steward/backups) if you don't choose them.
+roles:
+  inbox: main:Inbox

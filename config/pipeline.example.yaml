@@ -1,0 +1,44 @@
+# pipeline.yaml: background work. Copy to pipeline.yaml and edit. Every key is optional.
+config_version: 1
+
+# Worker threads per lane. The executor lane (file writes) is always 1.
+lanes:
+  io: { concurrency: 1 }          # discovery and hashing; keep at 1 to spare the disks
+  cpu: { concurrency: 2 }         # text extraction and OCR
+  llm-local: { concurrency: 1 }   # requests to your own model server
+  llm-remote: { concurrency: 2 }  # requests to cloud models (remote_llm module)
+  events: { concurrency: 1 }      # delivering events to modules
+
+jobs:
+  lease_seconds: 300        # a job a worker stops renewing goes to another worker after this
+  max_attempts: 5           # then the job is marked dead (retry with `steward jobs retry`)
+  backoff_base_seconds: 30  # wait after the 1st failure; doubles each time
+  backoff_max_seconds: 3600
+  keep_done_days: 7         # finished jobs are deleted after this (dead ones are kept)
+  poll_seconds: 1.0
+
+events:
+  retention_days: 90
+
+# Finding files: a full scan of every library (on start and every 6 hours, schedule
+# `core.reconcile`) plus a watcher that scans changed paths within seconds.
+discovery:
+  watch: true                # needs enough inotify watches for big libraries
+                             # (fs.inotify.max_user_watches); scans work regardless
+  debounce_seconds: 10       # wait for a path to settle before scanning it
+  scan_on_start: true
+  move_window_hours: 72      # a missing file reappearing elsewhere within this keeps its identity
+  idle_io_priority: true     # hash at idle disk priority (Linux)
+  max_read_mib_per_second: 0 # cap hashing reads for slow/shared disks; 0 = no cap
+  # Never indexed, in any folder (folder types add their own `ignore` lists).
+  # Setting this replaces the defaults:
+  # ignore_patterns: ["*.part", "*.crdownload", "*.tmp", "~$*", ".~lock*", ".sync*",
+  #                   ".DS_Store", "Thumbs.db", ".obsidian/workspace*.json"]
+
+# Change when a schedule runs, or turn it off: "every 30m", "every 6h", "every 1d",
+# "daily 03:00" (in the timezone from steward.yaml), or "off".
+# `steward config check` lists every schedule.
+schedules: {}
+#  core.prune_jobs: daily 04:00
+#  core.prune_events: daily 04:10
+#  core.reconcile: every 6h

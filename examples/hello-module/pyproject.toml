@@ -1,6 +1,6 @@
 [project]
 name = "steward-hello"
-version = "0.1.0"
+version = "0.3.0"
 description = "A minimal out-of-tree steward-ai module: a template and the loader's test module."
 license = "Apache-2.0"
 requires-python = ">=3.12"

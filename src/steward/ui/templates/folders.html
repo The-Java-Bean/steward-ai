@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Folders{% endblock %}
+{% block content %}
+<h1>Folders</h1>
+<p><a href="/ui/settings">Back to settings</a></p>
+
+<section class="card">
+  <h2>Libraries</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Name</th><th>Root</th></tr></thead>
+    <tbody>
+    {% for lib in libraries %}
+      <tr><td><code>{{ lib.library_id }}</code></td><td>{{ lib.name }}</td><td><code>{{ lib.root }}</code></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Add or move libraries with <code>steward folders import</code> or the setup wizard.</p>
+</section>
+
+<section class="card">
+  <h2>Mapped folders</h2>
+  <p>Folders are written <code>library:path/inside</code>. A folder's type carries down to
+  everything inside it. Unlocking a folder, or making it less private, asks for your password.</p>
+  {% if rows %}
+  <table>
+    <thead><tr><th>Folder</th><th>Type</th><th>Effective</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set s = row.settings %}
+      <tr>
+        <td><code>{{ row.ref }}</code></td>
+        <td>{{ row.mapping.type_name or '(lock only)' }}</td>
+        <td>{{ s.type.name }}, {{ s.sensitivity }}{% if s.locked %}, <strong>locked</strong>{% endif %}{% if not s.writable %}, read-only{% endif %}{% if not s.visible %}, hidden{% endif %}</td>
+        <td>
+          <form method="post" action="/ui/settings/folders/lock" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ form_token }}">
+            <input type="hidden" name="folder" value="{{ row.ref }}">
+            <input type="hidden" name="locked" value="{{ 'false' if s.locked else 'true' }}">
+            <button type="submit" class="small">{{ 'Unlock' if s.locked else 'Lock' }}</button>
+          </form>
+          {% if row.mapping.type_name %}
+          <form method="post" action="/ui/settings/folders/unmap" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ form_token }}">
+            <input type="hidden" name="folder" value="{{ row.ref }}">
+            <button type="submit" class="small secondary">Remove type</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/ui/settings/folders/map">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Folder <input name="folder" maxlength="4096" placeholder="library:path/to/folder" required></label>
+    <label>Type
+      <select name="type_name">
+        {% for t in types %}<option value="{{ t.name }}">{{ t.name }}{% if t.description %} · {{ t.description }}{% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Set type</button>
+    {% if not recent %}<p class="hint">Unlocking or making a folder less private asks for your password.</p>{% endif %}
+  </form>
+</section>
+
+<section class="card">
+  <h2>Roles</h2>
+  <p>Where steward-ai keeps its own things (trash, edit backups, inbox...). Change them with
+  <code>steward folders role</code>.</p>
+  <table>
+    <thead><tr><th>Role</th><th>Folder</th></tr></thead>
+    <tbody>
+    {% for role, ref in roles %}<tr><td>{{ role }}</td><td><code>{{ ref }}</code></td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

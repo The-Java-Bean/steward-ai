@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p><a href="/ui/settings/folders">Folders, types and roles</a></p>
+
+{% if new_token %}
+<section class="card highlight" aria-labelledby="new-token">
+  <h2 id="new-token">Your new API token</h2>
+  <p>Copy it now. It won't be shown again.</p>
+  <p><code class="secret">{{ new_token }}</code></p>
+  <p class="hint">Send it as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+</section>
+{% endif %}
+
+<section class="card" id="account">
+  <h2>Account</h2>
+  <p>Logged in as <strong>{{ user.username }}</strong> ({{ user.role }}). Password last changed {{ user.password_changed_at.strftime('%Y-%m-%d %H:%M UTC') }}.</p>
+  <form method="post" action="/ui/settings/password">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="username" value="{{ user.username }}" autocomplete="username">
+    <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password <input name="new" type="password" autocomplete="new-password" minlength="12" required></label>
+    <label>New password again <input name="confirm" type="password" autocomplete="new-password" minlength="12" required></label>
+    <button type="submit">Change password</button>
+    <p class="hint">At least 12 characters, not a common password. Your other sessions are logged out.</p>
+  </form>
+</section>
+
+<section class="card" id="sessions">
+  <h2>Sessions</h2>
+  <table>
+    <thead><tr><th>Started</th><th>Last seen</th><th>Address</th><th>Browser</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sessions %}
+      <tr>
+        <td>{{ s.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ s.last_seen.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>{{ s.ip or '' }}</td>
+        <td class="ua">{{ s.user_agent or '' }}</td>
+        <td>
+          {% if s.session_id == current_session %}<span class="tag">this one</span>{% endif %}
+          <form method="post" action="/ui/settings/sessions/revoke" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ form_token }}">
+            <input type="hidden" name="session_id" value="{{ s.session_id }}">
+            <button type="submit" class="small">Log out</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if sessions|length > 1 %}
+  <form method="post" action="/ui/settings/sessions/revoke-others">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <button type="submit">Log out all other sessions</button>
+  </form>
+  {% endif %}
+  <p class="hint">Times are UTC.</p>
+</section>
+
+<section class="card" id="login">
+  <h2>Re-auth</h2>
+  <p>Before sensitive steps (opening locked folders, unlocking folders, creating API tokens,
+  changing these settings) steward-ai asks for your password again, unless you entered it recently.</p>
+  {% if not login_settings.reauth_enabled %}
+  <p class="warning">Re-auth is off. Locked folders and sensitive steps then need only a normal login.</p>
+  {% endif %}
+  <form method="post" action="/ui/settings/login">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label class="check"><input type="checkbox" name="reauth_enabled" value="true"{% if login_settings.reauth_enabled %} checked{% endif %}> Ask for my password before sensitive steps</label>
+    <label>Don't ask again for (minutes; 0 = ask every time)
+      <input name="reauth_minutes" type="number" min="0" max="1440" value="{{ login_settings.reauth_minutes }}" required></label>
+    <button type="submit">Save</button>
+    {% if not recent %}<p class="hint">Saving asks for your password.</p>{% endif %}
+  </form>
+</section>
+
+<section class="card" id="tokens">
+  <h2>API tokens</h2>
+  <p>For scripts and other programs. Scopes: <code>read</code> (look things up) and
+  <code>propose</code> (suggest changes for you to approve). No token can approve changes,
+  open locked folders or change settings.</p>
+  {% if tokens %}
+  <table>
+    <thead><tr><th>Label</th><th>Scopes</th><th>Token</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr{% if not t.active(now) %} class="ended"{% endif %}>
+        <td>{{ t.label }}</td>
+        <td>{{ t.scopes|join(', ') }}</td>
+        <td><code>…{{ t.hint }}</code></td>
+        <td>{{ t.created_at.strftime('%Y-%m-%d') }}</td>
+        <td>{{ t.expires_at.strftime('%Y-%m-%d') if t.expires_at else 'never' }}{% if not t.active(now) %} (expired){% endif %}</td>
+        <td>{{ t.last_used.strftime('%Y-%m-%d %H:%M') if t.last_used else 'never' }}</td>
+        <td>
+          <form method="post" action="/ui/settings/tokens/revoke" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ form_token }}">
+            <input type="hidden" name="token_id" value="{{ t.token_id }}">
+            <button type="submit" class="small">Revoke</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/ui/settings/tokens">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Label <input name="label" maxlength="100" required></label>
+    <fieldset>
+      <legend>Scopes</legend>
+      {% for scope in scopes %}
+      <label class="check"><input type="checkbox" name="scopes" value="{{ scope }}"{% if scope == 'read' %} checked{% endif %}> {{ scope }}</label>
+      {% endfor %}
+    </fieldset>
+    <label>Expires after (days; empty = never) <input name="expires_days" type="number" min="1" max="3650" value="90"></label>
+    <button type="submit">Create token</button>
+    {% if not recent %}<p class="hint">Creating a token asks for your password.</p>{% endif %}
+  </form>
+</section>
+{% endblock %}

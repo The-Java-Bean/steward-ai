@@ -1,0 +1,54 @@
+# steward.yaml: core settings. Copy to steward.yaml and edit. Every key is optional.
+config_version: 1
+
+# Databases, caches and backups. Must be on a local disk (SQLite).
+data_dir: /data
+
+# IANA timezone used for daily schedules, e.g. Europe/Berlin or America/New_York.
+timezone: UTC
+
+# debug, info, warning or error. Logs never contain file content.
+log_level: info
+
+# Reverse proxies in front of steward-ai (addresses or CIDR ranges). Only these may
+# set the client address through X-Forwarded-For. Leave empty without a proxy.
+trusted_proxies: []
+#  - 172.16.0.0/12
+
+auth:
+  # A session ends after this many hours without a request...
+  session_idle_hours: 12
+  # ...and this many days after login in any case.
+  session_max_days: 7
+  # Temporary lockouts after wrong passwords (logins and re-auth prompts).
+  login:
+    window_minutes: 15
+    max_failures_per_ip: 10
+    max_failures_per_account: 50
+    lockout_minutes: 15
+    retention_days: 30
+# The re-auth window (default 15 minutes) is a setting in the web UI, not here.
+
+api:
+  # Where `steward api` listens. Inside a container keep 0.0.0.0 and choose who can
+  # reach it with the published port (or a reverse proxy).
+  host: 0.0.0.0
+  port: 8420
+  # Mark cookies Secure: auto (when the request came over HTTPS, directly or from a
+  # trusted proxy sending X-Forwarded-Proto: https), always or never.
+  secure_cookies: auto
+
+setup:
+  # The setup wizard suggests every folder inside these as a library.
+  library_dirs:
+    - /libraries
+
+backup:
+  # `steward backup` writes consistent copies of the databases plus state.json here,
+  # every night at 03:30 (`core.backup` in pipeline.yaml; turn it off there if your own
+  # backup tool runs `steward backup` as a pre-backup hook). Default: <data_dir>/backups.
+  # dir: /data/backups
+  keep: 7
+  # Before a migration changes existing databases, a backup at most this old must
+  # exist; `steward api` and `steward db upgrade` take one first if not.
+  max_age_before_migrate_hours: 24

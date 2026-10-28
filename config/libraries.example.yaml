@@ -1,0 +1,9 @@
+# libraries.yaml: the folders steward-ai manages. Copy to libraries.yaml and edit,
+# then run `steward folders import`. The database is the source of truth afterwards
+# (the setup wizard and Settings edit it); importing again only adds and updates.
+config_version: 1
+
+libraries:
+  main:                        # library id: lowercase letters, digits, - or _
+    path: /libraries/main      # the folder as steward-ai sees it (inside the container)
+    name: My files             # shown in the UI

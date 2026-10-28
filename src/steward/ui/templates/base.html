@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>{% block title %}steward-ai{% endblock %} · steward-ai</title>
+  <link rel="stylesheet" href="/static/steward.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/ui/">steward-ai</a>
+    {% if nav %}
+    <nav aria-label="Main">
+      {% for entry in nav %}
+      <a href="{{ entry.path }}"{% if path == entry.path or (entry.path != '/ui/' and path.startswith(entry.path)) %} aria-current="page"{% endif %}>{{ entry.title }}</a>
+      {% endfor %}
+    </nav>
+    <form method="post" action="/logout" class="logout">
+      <input type="hidden" name="csrf_token" value="{{ form_token }}">
+      <button type="submit" class="link">Log out {{ principal.user.username }}</button>
+    </form>
+    {% endif %}
+  </header>
+  <main>
+    {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>steward-ai {{ version }}</footer>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Trash and backups{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<h1>Trash and backups</h1>
+<p>When you delete a file in steward-ai it goes to the <strong>trash</strong> folder; when steward-ai
+changes a file it keeps the old version in the <strong>edit backups</strong> folder. Both hold copies of
+anything, including private files, so they're treated as local-only and never shared.</p>
+<form method="post" action="/setup/roles">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  {% for role, title in roles %}
+  <label>{{ title }}
+    <select name="{{ role }}">
+      <option value="">default (a hidden .steward folder in the first library)</option>
+      {% for library_id, folders in groups %}
+      <optgroup label="{{ library_id }}">
+        {% for f in folders %}<option value="{{ f.ref }}">{{ f.name }}</option>{% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <button type="submit">Finish setup</button>
+</form>
+{% endblock %}

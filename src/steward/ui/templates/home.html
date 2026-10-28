@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>steward-ai</h1>
+{% if not login_settings.reauth_enabled %}
+<p class="warning">Re-auth is off: sensitive steps and locked folders need only a normal login. <a href="/ui/settings#login">Change this in Settings</a>.</p>
+{% endif %}
+{% if progress.private_skipped %}
+<p class="warning">You haven't chosen a private folder. Map one with <code>steward folders map LIBRARY:PATH private</code>.</p>
+{% endif %}
+<p>Setup is finished. The file manager, search and chat arrive in later releases; for now,
+manage folders with the <code>steward</code> command line and your account in <a href="/ui/settings">Settings</a>.</p>
+{% if nav|length > 2 %}
+<h2>Pages</h2>
+<ul>
+  {% for entry in nav if entry.path not in ('/ui/', '/ui/settings') %}
+  <li><a href="{{ entry.path }}">{{ entry.title }}</a></li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

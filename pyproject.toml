@@ -7,8 +7,18 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.16",
+    "argon2-cffi>=25.1",
+    "blake3>=1.0",
+    "fastapi>=0.162.0",
+    "jinja2>=3.1.6",
     "pydantic>=2.11",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
     "typer>=0.16",
+    "uvicorn>=0.54.0",
+    "watchdog>=6.0",
 ]
 
 [project.scripts]
@@ -19,12 +29,14 @@ steward = "steward.cli:app"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "import-linter>=2.3",
     "mypy>=1.17",
     "pip-licenses>=5.0",
     "pytest>=8.4",
     "ruff>=0.12",
     "steward-hello",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [tool.uv.workspace]
@@ -50,17 +62,21 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PT", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S105", "S106", "RUF043"]  # asserts; test passwords; plain match=
 "scripts/**" = ["S603", "S607"]  # fixed git commands, no user input
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["src", "tests", "examples/hello-module/src", "scripts"]
+mypy_path = "tests"
+plugins = ["pydantic.mypy"]
+exclude = ["src/steward/core/db/(versions|alembic)/", "/migrations/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--import-mode=importlib"]
+pythonpath = ["tests"]
 markers = ["live: calls real model endpoints (opt in with -m live)"]
 
 # --- architecture contracts (lint-imports) ------------------------------------
@@ -72,22 +88,22 @@ root_packages = ["steward", "steward_hello"]
 name = "The SDK depends on nothing else in steward"
 type = "forbidden"
 source_modules = ["steward.sdk"]
-forbidden_modules = ["steward.core", "steward.modules", "steward.cli"]
+forbidden_modules = ["steward.core", "steward.api", "steward.modules", "steward.cli"]
 
 [[tool.importlinter.contracts]]
 name = "Built-in modules use only the SDK"
 type = "forbidden"
 source_modules = ["steward.modules"]
-forbidden_modules = ["steward.core", "steward.cli"]
+forbidden_modules = ["steward.core", "steward.api", "steward.cli"]
 
 [[tool.importlinter.contracts]]
 name = "Out-of-tree modules use only the SDK"
 type = "forbidden"
 source_modules = ["steward_hello"]
-forbidden_modules = ["steward.core", "steward.modules", "steward.cli"]
+forbidden_modules = ["steward.core", "steward.api", "steward.modules", "steward.cli"]
 
 [[tool.importlinter.contracts]]
 name = "The core never imports modules directly (they are discovered)"
 type = "forbidden"
 source_modules = ["steward.core"]
-forbidden_modules = ["steward.modules", "steward.cli", "steward_hello"]
+forbidden_modules = ["steward.modules", "steward.api", "steward.cli", "steward_hello"]

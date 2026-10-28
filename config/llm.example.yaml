@@ -1,0 +1,24 @@
+# llm.yaml: model servers and the roles mapped to them. Optional: without it
+# steward-ai runs with no model, and features that need one stay off.
+config_version: 1
+
+endpoints:
+  local:
+    # Any OpenAI-compatible API (Ollama, llama.cpp server, vLLM, LocalAI...).
+    base_url: http://<model-server>:11434/v1
+    # Required. `local` endpoints may receive local-only content. `remote` endpoints
+    # never do, and need the remote_llm module (not available yet).
+    trust: local
+    # api_key_env: LOCAL_LLM_KEY   # name of an environment variable, never the key
+    timeout_s: 600
+    max_concurrency: 2
+
+roles:
+  chat:
+    endpoint: local
+    model: <chat-model>
+    context: 8192
+  embed:
+    endpoint: local
+    model: <embedding-model>
+    dims: 768

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Journal{% endblock %}
+{% block content %}
+<h1>Journal</h1>
+<p>Everything steward-ai changed on disk, newest first. Undo puts things back, unless the
+files changed since.{% if not show_locked %} Actions in locked folders show no details
+until you <a href="/reauth?next=/ui/journal">enter your password</a>.{% endif %}</p>
+{% if rows %}
+<table>
+  <thead><tr><th>When</th><th>What</th><th>By</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}{% set e = row.entry %}
+    <tr{% if e.undone_by %} class="ended"{% endif %}>
+      <td>{{ e.applied_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ row.summary }}{% if e.undo_of %} <span class="hint">(undo of #{{ e.undo_of }})</span>{% endif %}{% if e.undone_by %} <span class="hint">(undone)</span>{% endif %}</td>
+      <td>{{ e.actor }}</td>
+      <td>{% if e.undoable %}
+        <form method="post" action="/ui/journal/{{ e.entry_id }}/undo" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ form_token }}">
+          <button type="submit" class="small">Undo</button>
+        </form>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if older %}<p><a href="/ui/journal?before={{ older }}">Older</a></p>{% endif %}
+{% else %}
+<p>Nothing yet.</p>
+{% endif %}
+{% endblock %}

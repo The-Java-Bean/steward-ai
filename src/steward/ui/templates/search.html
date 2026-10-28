@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<h1>Search</h1>
+<form method="get" action="/ui/search" role="search">
+  <label>Words in the file name or path <input name="q" value="{{ q }}" maxlength="2000" autofocus></label>
+  <label>Kind
+    <select name="kind">
+      <option value="">any</option>
+      {% for k in kinds %}<option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ k }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if libraries|length > 1 %}
+  <label>Library
+    <select name="library">
+      <option value="">all</option>
+      {% for lib in libraries %}<option value="{{ lib }}"{% if lib == library %} selected{% endif %}>{{ lib }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <button type="submit">Search</button>
+</form>
+<p class="hint">Locked and hidden folders and the trash are never searched here.</p>
+
+{% if results is not none %}
+<h2>{{ results.total }}{% if results.capped %}+{% endif %} found</h2>
+{% if results.hits %}
+<table>
+  <thead><tr><th>Name</th><th>Folder</th><th>Kind</th><th>Size</th><th>Modified</th></tr></thead>
+  <tbody>
+  {% for h in results.hits %}
+    <tr>
+      <td>{{ h.name }}</td>
+      <td><code>{{ h.library_id }}:{{ h.folder }}</code></td>
+      <td>{{ h.kind or '' }}</td>
+      <td>{{ h.size|filesizeformat }}</td>
+      <td>{{ h.modified.strftime('%Y-%m-%d') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p>
+  {% if page > 1 %}<a href="?q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if results.total > page * per_page %}<a href="?q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
+</p>
+{% endif %}
+{% endblock %}

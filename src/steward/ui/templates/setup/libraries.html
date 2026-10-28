@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Libraries{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<h1>Libraries</h1>
+<p>A library is a folder steward-ai looks after, as mounted into its container.</p>
+{% for w in warnings %}<p class="warning">{{ w }}</p>{% endfor %}
+
+{% if libraries %}
+<h2>Added</h2>
+<table>
+  <thead><tr><th>Id</th><th>Name</th><th>Folder</th></tr></thead>
+  <tbody>
+  {% for lib in libraries %}<tr><td><code>{{ lib.library_id }}</code></td><td>{{ lib.name }}</td><td><code>{{ lib.root }}</code></td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if can_import %}
+<section class="card">
+  <h2>From your config files</h2>
+  <p>Import <code>libraries.yaml</code> and <code>folders.yaml</code> (libraries, folder types, mappings and roles). Only adds; nothing is removed.</p>
+  <form method="post" action="/setup/libraries">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <button type="submit" name="action" value="import">Import config files</button>
+  </form>
+</section>
+{% endif %}
+
+{% if candidates %}
+<h2>Found</h2>
+<table>
+  <thead><tr><th>Folder</th><th>From</th><th></th></tr></thead>
+  <tbody>
+  {% for c in candidates %}
+    <tr>
+      <td><code>{{ c.path }}</code></td>
+      <td>{{ c.source }}</td>
+      <td>
+        <form method="post" action="/setup/libraries" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ form_token }}">
+          <input type="hidden" name="library_id" value="{{ c.library_id }}">
+          <input type="hidden" name="path" value="{{ c.path }}">
+          <input type="hidden" name="name" value="{{ c.name }}">
+          <button type="submit" name="action" value="add" class="small">Add as “{{ c.library_id }}”</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<section class="card">
+  <h2>Add a folder</h2>
+  <form method="post" action="/setup/libraries">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Folder (absolute path inside the container) <input name="path" placeholder="/libraries/main" required></label>
+    <label>Id (lowercase, used in commands: <code>id:path/to/folder</code>) <input name="library_id" pattern="[a-z][a-z0-9_\-]{0,63}" placeholder="main" required></label>
+    <label>Name (optional) <input name="name" maxlength="200"></label>
+    <button type="submit" name="action" value="add">Add library</button>
+  </form>
+  <p class="hint">Folders inside {% for d in library_dirs %}<code>{{ d }}</code>{% if not loop.last %}, {% endif %}{% endfor %} are found automatically (<code>setup.library_dirs</code> in <code>steward.yaml</code>).</p>
+</section>
+
+<form method="post" action="/setup/libraries" class="next">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <button type="submit" name="action" value="next">Next: folder types</button>
+</form>
+{% endblock %}

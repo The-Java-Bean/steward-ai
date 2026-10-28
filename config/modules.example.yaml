@@ -1,0 +1,12 @@
+# modules.yaml: which modules run, and their settings. Copy to modules.yaml and edit.
+#
+# Unlisted modules use their default: built-in feature modules are on, everything
+# else (integrations, separately installed modules) is off until enabled here.
+# Run `steward modules` to see what's installed and enabled.
+config_version: 1
+
+modules: {}
+#  hello:                 # the example module (development installs only)
+#    enabled: true
+#    settings:
+#      greeting: hi

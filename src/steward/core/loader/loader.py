@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import heapq
 import importlib.metadata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, get_args
 
@@ -27,6 +27,8 @@ from steward.sdk import (
 )
 
 ENTRY_POINT_GROUP = "steward.modules"
+BUILTIN_DISTRIBUTION = "steward-ai"
+RESERVED_NAMES = frozenset({"core", "steward"})
 
 
 class ModuleLoadError(Exception):
@@ -102,6 +104,8 @@ def discover(
                 f"module name {ep.name!r} ({_provider(ep)}) must be snake_case "
                 f"matching {MODULE_NAME_PATTERN.pattern}"
             )
+        if ep.name in RESERVED_NAMES:
+            raise InvalidModuleError(f"module name {ep.name!r} ({_provider(ep)}) is reserved")
         if ep.name in found:
             raise DuplicateModuleError(
                 f"module {ep.name!r} is provided by both "
@@ -111,12 +115,60 @@ def discover(
     return found
 
 
+@dataclass(frozen=True, slots=True)
+class ModuleChoice:
+    """What the owner configured for one module (from `modules.yaml`)."""
+
+    enabled: bool | None = None
+    settings: Mapping[str, Any] | None = None
+
+
+def resolve_enabled(
+    choices: Mapping[str, ModuleChoice],
+    *,
+    entry_points: Iterable[EntryPointLike] | None = None,
+) -> tuple[dict[str, Mapping[str, Any] | None], list[str]]:
+    """Decide which installed modules are enabled. Returns (name -> settings, warnings).
+
+    A module is on if the owner says so. Otherwise built-in feature modules are on and
+    everything else is off: installing a package never turns a module on by itself.
+    """
+    available = discover(entry_points)
+    enabled: dict[str, Mapping[str, Any] | None] = {}
+    warnings: list[str] = []
+    for name, choice in choices.items():
+        if name not in available:
+            if choice.enabled:
+                raise UnknownModuleError(
+                    f"modules.yaml enables {name!r}, which isn't installed; "
+                    f"installed: {', '.join(sorted(available)) or 'none'}"
+                )
+            warnings.append(f"modules.yaml mentions {name!r}, which isn't installed")
+    for name, ep in sorted(available.items()):
+        choice = choices.get(name, ModuleChoice())
+        on = choice.enabled
+        if on is None:
+            on = is_builtin(ep) and _kind(ep) == "feature"
+        if on:
+            enabled[name] = choice.settings
+    return enabled, warnings
+
+
+def is_builtin(ep: EntryPointLike) -> bool:
+    return _provider(ep) == BUILTIN_DISTRIBUTION
+
+
 def load_modules(
     enabled: Mapping[str, Mapping[str, Any] | None],
     *,
     entry_points: Iterable[EntryPointLike] | None = None,
+    core: Callable[[Registry], None] | None = None,
 ) -> LoadedModules:
-    """Load the `enabled` modules (name -> raw config section) and register them."""
+    """Load the `enabled` modules (name -> raw config section) and register them.
+
+    `core`, if given, registers the core's own jobs, schedules and migrations first,
+    under the owner name `core`, through the same registry the modules use.
+    """
     available = discover(entry_points)
 
     unknown = sorted(set(enabled) - set(available))
@@ -138,6 +190,8 @@ def load_modules(
             raise MissingDependencyError(f"module {name!r} requires {', '.join(details)}")
 
     registrations = Registrations()
+    if core is not None:
+        core(Registry("core", None, registrations))
     loaded: list[LoadedModule] = []
     for name in _dependency_order(instances):
         module = instances[name]
@@ -150,7 +204,28 @@ def load_modules(
             raise RegistrationError(f"module {name!r} failed to register: {exc!r}") from exc
         loaded.append(LoadedModule(module, _provider(available[name]), config))
 
+    _check_cross_references(registrations)
     return LoadedModules(tuple(loaded), registrations)
+
+
+def _check_cross_references(registrations: Registrations) -> None:
+    job_types = registrations.job_types()
+    for reg in registrations.at("schedule"):
+        job = registrations.schedules()[reg.name].job
+        if job not in job_types:
+            raise RegistrationError(
+                f"schedule {reg.name!r} ({reg.module}) runs job {job!r}, which isn't registered"
+            )
+
+
+def _kind(ep: EntryPointLike) -> str | None:
+    try:
+        cls = ep.load()
+    except Exception as exc:
+        raise InvalidModuleError(
+            f"module {ep.name!r} ({ep.value}) failed to import: {exc!r}"
+        ) from exc
+    return getattr(cls, "kind", None)
 
 
 def _provider(ep: EntryPointLike) -> str | None:

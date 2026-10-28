@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Health{% endblock %}
+{% block content %}
+<h1>Health</h1>
+{% for w in warnings %}<p class="warning">{{ w }}</p>{% endfor %}
+<table>
+  <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>
+  <tbody>
+  {% for name, r in results %}
+    <tr>
+      <td>{{ name }}</td>
+      <td><span class="tag status-{{ r.status }}">{{ r.status }}</span></td>
+      <td>{{ r.detail }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Failed password checks (last 24 hours)</h2>
+{% if failures %}
+<table>
+  <thead><tr><th>When</th><th>Username</th><th>From</th><th>Where</th></tr></thead>
+  <tbody>
+  {% for username, ip, kind, at in failures %}
+    <tr><td>{{ at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ username }}</td><td>{{ ip }}</td><td>{{ kind }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>None.</p>
+{% endif %}
+
+<h2>Modules</h2>
+<p>{{ modules|join(', ') if modules else 'None loaded.' }}</p>
+{% endblock %}

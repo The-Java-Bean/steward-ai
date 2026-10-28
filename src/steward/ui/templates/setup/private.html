@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Private folder{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<h1>Private folder</h1>
+<p>Files in a private folder are <strong>locked</strong>: hidden from chat, search, shares and
+other programs, viewable only in the Locked Folder (with your password), and only ever
+processed by local models.</p>
+
+<section class="card">
+  <h2>Use an existing folder</h2>
+  <form method="post" action="/setup/private">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Folder
+      <select name="folder" required>
+        <option value="">choose…</option>
+        {% for library_id, folders in groups %}
+        <optgroup label="{{ library_id }}">
+          {% for f in folders %}<option value="{{ f.ref }}"{% if f.suggestion.type_name == 'private' %} selected{% endif %}>{{ f.name }}{% if f.current_type %} ({{ f.current_type }}){% endif %}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="permanent" value="true"> Lock it permanently (only <code>steward folders unlock --permanent</code> on the server can unlock it)</label>
+    <button type="submit" name="action" value="existing">Make it private</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Create a new folder</h2>
+  <form method="post" action="/setup/private">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Library
+      <select name="library_id" required>
+        {% for lib in libraries %}<option value="{{ lib.library_id }}">{{ lib.library_id }} ({{ lib.root }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Folder name <input name="new_name" value="Private" required></label>
+    <label class="check"><input type="checkbox" name="permanent" value="true"> Lock it permanently</label>
+    <button type="submit" name="action" value="create">Create private folder</button>
+  </form>
+</section>
+
+<form method="post" action="/setup/private" class="next">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <p class="warning">Without a private folder, everything steward-ai can see may be searched and shown in chat. You can choose one later.</p>
+  <button type="submit" name="action" value="skip" class="secondary">Skip for now</button>
+</form>
+{% endblock %}

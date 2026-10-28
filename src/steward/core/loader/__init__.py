@@ -11,12 +11,15 @@ from steward.core.loader.loader import (
     LoadedModule,
     LoadedModules,
     MissingDependencyError,
+    ModuleChoice,
     ModuleConfigError,
     ModuleLoadError,
     RegistrationError,
     UnknownModuleError,
     discover,
+    is_builtin,
     load_modules,
+    resolve_enabled,
 )
 
 __all__ = [
@@ -28,10 +31,13 @@ __all__ = [
     "LoadedModule",
     "LoadedModules",
     "MissingDependencyError",
+    "ModuleChoice",
     "ModuleConfigError",
     "ModuleLoadError",
     "RegistrationError",
     "UnknownModuleError",
     "discover",
+    "is_builtin",
     "load_modules",
+    "resolve_enabled",
 ]

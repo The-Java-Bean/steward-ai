@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Folder types{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<h1>Folder types</h1>
+<p>A folder's type decides what steward-ai does with it: how deeply it reads files, whether
+they may go to a model, whether they can be shared. Subfolders inherit it. Suggestions come
+from folder names and the kinds of files inside; change or skip any of them.</p>
+<form method="post" action="/setup/types">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  {% for library_id, folders in groups %}
+  <h2><code>{{ library_id }}</code></h2>
+  {% if not folders %}<p class="hint">No folders at the top of this library.</p>{% endif %}
+  <table>
+    <thead><tr><th>Folder</th><th>Type</th><th>Why</th></tr></thead>
+    <tbody>
+    {% for f in folders %}
+      <tr>
+        <td><code>{{ f.name }}</code></td>
+        <td>
+          {% if f.current_type %}
+            {{ f.current_type }} <span class="hint">(already set)</span>
+          {% else %}
+          <select name="type:{{ f.ref }}" aria-label="Type for {{ f.name }}">
+            <option value="">skip (inherits {{ f.effective_type }})</option>
+            {% for name, description in types %}
+            <option value="{{ name }}" title="{{ description }}"{% if name == f.suggestion.type_name %} selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+        </td>
+        <td class="hint">{% if not f.current_type %}{{ f.suggestion.reason }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+  <details>
+    <summary>What the types mean</summary>
+    <dl>{% for name, description in types %}<dt>{{ name }}</dt><dd>{{ description }}</dd>{% endfor %}</dl>
+  </details>
+  <button type="submit">Save and continue</button>
+</form>
+{% endblock %}

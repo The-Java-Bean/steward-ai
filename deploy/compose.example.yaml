@@ -4,8 +4,11 @@
 #   cp deploy/example.env .env          # then edit .env
 #   docker compose up -d
 #
-# NOTE: pre-alpha. The image builds, but the `api` and `worker` commands arrive in
-# Phase 1; until then the containers only print the CLI help and exit.
+# Then open http://<your-server>:8420/setup and paste the setup token from:
+#   docker compose logs steward-api | grep "setup token"
+#
+# NOTE: pre-alpha. `steward api` migrates the databases when it starts; the worker
+# waits for that (it exits if the databases aren't current, and restarts).
 #
 # Each library is ONE bind mount: read-write for steward-api (only its executor lane
 # writes), read-only for steward-worker. Don't split a library into several mounts:
@@ -25,11 +28,19 @@ services:
       - ./config:/config
       - ${STEWARD_DATA:-./data}:/data
       - ${LIBRARY_1:?set LIBRARY_1 in .env}:/libraries/main
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8420/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   steward-worker:
     image: steward:${STEWARD_VERSION:-dev}
     command: ["steward", "worker"]
+    depends_on:
+      steward-api:
+        condition: service_healthy
     user: "${PUID:-1000}:${PGID:-1000}"
     volumes:
       - ./config:/config:ro

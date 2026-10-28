@@ -1,0 +1,21 @@
+# privacy.yaml: files more sensitive than their folder type says. Optional.
+# Sensitivity levels: normal < local-only (never sent to a remote model) < excluded
+# (never read at all, not even hashed). Rules and patterns can only raise a file's level.
+config_version: 1
+
+# Files matching these are `excluded`. Setting `secret_patterns` replaces the built-in
+# list (key files, password databases, .env files and the like); usually you only add:
+extra_secret_patterns:
+  - "*.ovpn"
+  - "secrets/**"
+
+# Patterns without `/` match file names anywhere (`*.pdf`); with `/` they match the path
+# inside the library (`taxes/**`, `**/medical/*.pdf`); a leading `/` anchors at the
+# library root. Matching ignores case.
+rules:
+  - pattern: "**/medical/**"
+    sensitivity: local-only
+  - pattern: "*.tax.pdf"
+    sensitivity: local-only
+
+# One file can also be raised by hand: `steward files sensitivity lib:path local-only`.

@@ -1,0 +1,5 @@
+<ol class="steps" aria-label="Setup steps">
+  {% for key, title in [('owner', 'Account'), ('libraries', 'Libraries'), ('types', 'Folder types'), ('private', 'Private folder'), ('roles', 'Trash and backups'), ('done', 'Done')] %}
+  <li{% if key == step %} aria-current="step"{% endif %}>{{ title }}</li>
+  {% endfor %}
+</ol>

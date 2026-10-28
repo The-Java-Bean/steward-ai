@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Setup finished{% endblock %}
+{% block content %}
+{% include "setup/_steps.html" %}
+<h1>Setup is finished</h1>
+<p>steward-ai's background worker scans your libraries now. Everything here can be changed
+later (for now with the <code>steward</code> command line: <code>steward folders …</code>).</p>
+<h2>Libraries</h2>
+<ul>{% for lib in libraries %}<li><code>{{ lib.library_id }}</code>: <code>{{ lib.root }}</code></li>{% endfor %}</ul>
+<h2>Folder types</h2>
+{% if mappings %}
+<ul>{% for ref, type_name, permanent in mappings %}<li><code>{{ ref }}</code>: {{ type_name }}{% if permanent %} (permanently locked){% endif %}</li>{% endfor %}</ul>
+{% else %}<p>None mapped; everything is <code>general</code>.</p>{% endif %}
+{% if progress.private_skipped %}<p class="warning">No private folder chosen.</p>{% endif %}
+<h2>Trash and backups</h2>
+<ul>{% for role, ref in roles %}<li>{{ role }}: <code>{{ ref }}</code></li>{% endfor %}</ul>
+<p><a class="button" href="/ui/">Go to steward-ai</a></p>
+{% endblock %}
