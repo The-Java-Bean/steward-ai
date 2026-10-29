@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+table.tags td { vertical-align: top; overflow-wrap: anywhere; }
+table.tags .num { text-align: right; white-space: nowrap; }
+table.tags tr.deprecated a { color: var(--muted); text-decoration: line-through; }
+.depth-1 { padding-left: 1.5rem; }
+.depth-2 { padding-left: 3rem; }
+.depth-3 { padding-left: 4.5rem; }
+.depth-4 { padding-left: 6rem; }
+.depth-5 { padding-left: 7.5rem; }
+.group { color: var(--muted); }
+.status { font-size: 0.8rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
+.row-actions { white-space: nowrap; font-size: 0.9rem; }
+form.inline { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0 0.5rem; }
+form.new-tag { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+form.new-tag label { margin: 0; flex: 1 1 14rem; }
+form.new-tag input { margin: 0; }
+ul.plain { list-style: none; padding: 0; }
+ul.plain li { margin: 0.4rem 0; }
+.review { border-left: 3px solid var(--line); padding-left: 0.75rem; }
+.notice-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; margin: 0.5rem 0; }
+.notice-bar form { margin: 0; }

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from datetime import datetime, time
 from typing import Any
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import ColumnElement, Connection, delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert
 
 from steward.core import queue
@@ -195,6 +195,28 @@ def enqueue_full_pass(conn: Connection, *, max_attempts: int = 5) -> int:
     return queue.enqueue(
         conn, FULL_JOB, lane="cpu", dedupe_key=FULL_DEDUPE, max_attempts=max_attempts
     )
+
+
+def rerun(
+    dbs: Databases,
+    stage: str,
+    *,
+    statuses: tuple[str, ...] | None = ("skipped",),
+    also: ColumnElement[bool] | None = None,
+) -> int:
+    """Drop `stage`'s results (only those with one of `statuses`, or matching `also`;
+    all with None) and queue a full pass, which runs it again where it applies. Returns
+    the results dropped."""
+    with dbs.index.write() as conn:
+        query = delete(stage_runs).where(stage_runs.c.stage == stage)
+        if statuses is not None:
+            chosen = stage_runs.c.status.in_(statuses)
+            query = query.where(chosen if also is None else or_(chosen, also))
+        dropped = conn.execute(query).rowcount
+    with dbs.state.write() as conn:
+        enqueue_full_pass(conn)
+    log.info("stage results dropped", extra={"fields": {"stage": stage, "dropped": dropped}})
+    return dropped
 
 
 def full_pass_needed(dbs: Databases, graph: StageGraph) -> bool:

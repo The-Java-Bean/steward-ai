@@ -143,6 +143,7 @@ steward scan                    # every library (or: steward scan main  /  main:
 steward files list main:Photos  # known files; --missing for ones that disappeared
 steward search invoice 2025     # names, paths and text (also /ui/search)
 steward search invoice --in text   # only the text and meaning (or --in names)
+steward search "tag:finance amount>100"  # filters in the query (see below)
 steward files text main:Documents/lease.pdf   # what was extracted from a file
 ```
 
@@ -157,7 +158,11 @@ steward files text main:Documents/lease.pdf   # what was extracted from a file
   marked *related* and show the start of their closest passage. If the model server
   can't be reached, search says so and uses words only.
 
-Filters: kind (document, image, ...), library, folder, size and date. Locked folders,
+Filters: kind (document, image, ...), library, folder, size and date, and in the
+query itself: `tag:finance` (that tag and the tags under it), `kind:image`, and facts
+read from files such as `doc_type:invoice`, `amount>100`, `amount<=20`,
+`sender:"acme"` or `taken:2024-06` (put values with spaces in "double quotes"; a word
+that isn't a known fact stays a word). Locked folders,
 hidden folders and the trash are never searched there; the Locked Folder has its own
 search (names and text) behind your password.
 
@@ -173,7 +178,7 @@ For very large libraries, the watcher may need more inotify watches
 (`sysctl fs.inotify.max_user_watches`); without them, changes are still found by the
 6-hourly scan.
 
-### Processing pipeline *(text extraction, OCR, embeddings, photo metadata and descriptions implemented; tags to come)*
+### Processing pipeline *(text extraction, OCR, embeddings, photo metadata and descriptions, document fields and tags implemented)*
 After a file is found, its content goes through **stages** that modules provide. Each
 unique content is processed once, however many copies or moves it has, and in the
 order stages depend on each other.
@@ -226,16 +231,64 @@ pixels before they're sent, and photos in locked or local-only folders only go t
 tags into XMP sidecar files comes later). HEIC and camera RAW files get metadata but no
 description yet.
 
+**Document fields.** With a model mapped to the `fields` role, the built-in `fields`
+module reads each document's type (invoice, receipt, letter, contract…), title, date,
+sender, recipient, amount and currency, and any extra fields a folder type asks for
+(`fields: [vendor, policy_number]`, which also turns it on for images and text files
+there). They show under **Details** on the file page and work as search filters.
+
 ```sh
 steward stages list   # stages in order, with done/skipped/failed counts
 steward stages plan   # ask the worker to check every file for missing stages
 steward files info main:Photos/IMG_0001.jpg   # one file's stage results and metadata
 ```
 
-### Models *(embeddings and photo descriptions implemented; tags and chat to come)*
+### Tags *(implemented)*
+Tags are labels like `finance/receipt` or `travel`: a `/` puts a tag under a broader
+one, and searching for `finance` also finds `finance/receipt`. A file's tags come from
+three places:
+- **you**: add or remove tags on a file's page in Files, or `steward tags add|remove`;
+- **its folder type**: `default_tags: [finance/receipt]` in a type gives every file in
+  such folders that tag;
+- **the AI**: with a model mapped to `apply_tags`, the built-in `tags` module chooses
+  up to 5 tags for each document, image and text file, **only from your vocabulary**
+  (it can't invent tags), using the text, the photo description and the fields.
+
+A tag you remove from a file stays removed, whatever the AI or the folder type says;
+a tag you add stays. Every change shows an Undo button and is in the journal.
+
+**Tags** in the menu (`/ui/tags`) shows the vocabulary as a tree with how many files
+have each tag, lets you create, rename (the old name keeps working), describe (the AI
+reads descriptions), deprecate (kept on files, never chosen again) and merge tags, and
+lists tags an AI created for you to accept. When you add tags, files the AI had no tags
+for are looked at again; to have every file tagged again with the current vocabulary,
+use **Re-tag every file** (one model call per file, so it can take hours).
+
+To start a vocabulary, write a YAML file and import it, or let a model suggest one from
+a sample of your files (never locked, hidden or excluded ones):
+
+```sh
+steward tags bootstrap                 # writes <data dir>/bootstrap/tags.yaml (role generate_tags)
+steward tags import tags.yaml          # adds the tags; nothing is renamed or removed
+steward tags list                      # the vocabulary with file counts
+steward tags export > tags.yaml        # the vocabulary as YAML
+steward tags retag --all               # tag every file again
+```
+
+```yaml
+tags:
+  - name: finance/receipt
+    description: Proof of payment for something bought
+    aliases: [receipts]
+```
+
+Locked files' tags only show in the Locked Folder, and counts leave them out.
+
+### Models *(embeddings, photo descriptions, fields and tags implemented; chat to come)*
 steward-ai works without any AI model. Features that need one are tied to **roles**
-(`embed` for searching by meaning, `caption` for describing photos; later `fields`,
-`apply_tags`, `chat`),
+(`embed` for searching by meaning, `caption` for describing photos, `fields` for
+reading facts from documents, `apply_tags` for tagging, `generate_tags` for suggesting
+a vocabulary; later `chat`),
 and you map each role to a model on any OpenAI-compatible server (Ollama, llama.cpp,
 vLLM, LM Studio…) in `llm.yaml`:
 
@@ -270,7 +323,8 @@ keeps working meanwhile. If the model server goes down, that work waits and resu
 itself. Some embedding models want an instruction in front of queries
 (`query_prefix`) or documents (`document_prefix`); `min_similarity` depends on the
 model (0.40 fits a 0.6B Qwen3 embedding model; see ADR 0023). A 12B vision model describes a
-photo in about 2 seconds on a GPU (ADR 0024).
+photo in about 2 seconds on a GPU (ADR 0024). `fields` and `apply_tags` work well with
+a small instruction model and `reasoning: none`; both use structured output.
 
 ### Login, settings and API tokens *(implemented)*
 steward-ai has its own login: one owner account with a password (at least 12
@@ -330,7 +384,9 @@ an **Undo** button, and everything is in the Journal. Deleting moves things to t
 trash and asks for your password (subject to your re-auth setting). Locked and hidden
 folders and the trash don't appear here (locked folders are in the Locked Folder,
 below), symlinks are never shown or followed, and search results link straight to
-their files. The
+their files. A file's page shows its **tags** (each marked as yours, the folder's or the
+AI's, with a button to remove it; a tag's name searches for it) and a box to add one,
+with your tags suggested as you type. The
 file manager is a built-in module, `files_ui`; turn it off in `modules.yaml` with
 `files_ui: {enabled: false}`.
 
@@ -492,8 +548,12 @@ steps, log). Read them first if present. A maintainer-only design document
   (`write_properties`, `Files.details`, `steward files info`), the `photos` module
   (`photos.exif` with the exiftool CLI, `photos.caption` with the `caption` vision
   role and Pillow), captions chunked by `documents.chunk` and searched like text,
-  `reasoning` per role (ADR 0024). Next (plan §19, now seven chunks): 5 `fields` +
-  `tags`, 6 XMP sidecars, 7 evals/reindex/acceptance.
+  `reasoning` per role (ADR 0024). Chunk 5 done: `fields` module (properties under
+  artifact `fields`), property and tag filters in search (also in the query), tags as
+  core storage (vocabulary, decisions, AI suggestions, effective tags), `tag.*` actions,
+  the `tags` module (`tags.apply`, `/ui/tags`), tags in the file manager, `steward
+  tags …`, bootstrap (ADR 0025). Next (plan §19, seven chunks): 6 XMP sidecars, 7
+  evals/reindex/acceptance.
 - **Phase 2 (files, Locked Folder, shares): all 5 chunks done** (1: module web SDK +
   `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018; 3: the Locked
   Folder `/ui/locked`, ADR 0019; 4: share links, the `shares` module and the core `/s/`
@@ -599,9 +659,13 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/unit/test_documents_extract.py`, `tests/integration/test_isolate.py`, `test_documents.py`, `test_content_index.py` | Extractors (encodings, frontmatter, fences, scripts, PDF pages/limits/encryption/owner-only password, DOCX/ODT headings, entity and member-size refusal) and chunker; isolation (timeout, CPU, memory, crash, error type only, changed file, symlink, renew); pipeline on two layouts (`Env`: every format, locked/excluded/archive/media folders, skipped reasons, edits reindexed, idempotent re-run, `/ui/search` snippets, `/api/v1/search?in=`, CLI `files text`/`search --in`); content-index writes, FTS triggers, cascade, stages can't write undeclared artifacts |
 | `tests/integration/test_ocr.py`, `tests/unit/test_ocr_helpers.py`, `tests/ocr_support.py` | OCR with a fake `tesseract` on two layouts: scanned/mixed/typed/blank-page PDFs, forced OCR (`scans` type adds `ocr`), images vs `media`, locked text, encrypted, failing tool (no output kept), health ok/off/missing program/missing languages, back-fill after the program appears, idempotent re-run; page merge, PGM stride, pixel cap, `FolderInfo.adds`; optional inputs in `tests/unit/test_stage_graph.py` (order, cycles, signature, `run_status`, pending/ready); process-group kills in `test_isolate.py` |
 | `tests/model_server.py`, `tests/integration/test_semantic.py`, `tests/integration/test_stage_models.py`, `tests/unit/test_model_roles.py` | `FakeModelServer` (threaded HTTP, `/v1/embeddings` = hashed bag of words with `SYNONYMS` so "plumber bill" ≈ "faucet invoice"; `/v1/chat/completions` from `replies`; `status` forces errors; records `requests`), `model_server(dims=)`, `llm_config(url, embed_model=, dims=, **embed)`; semantic search on two layouts (no model, back-fill, model/dims/prefix change, old space dropped, model down → words only + breaker, jobs postponed without attempts, dims mismatch, cascade, scope/mode/threshold, web pages); a test module with a chat role (structured output + retry, provenance, privacy skip), `queue.postpone`, `models list|probe`, `stages list`; declarations, graph filtering, model keys, structured output methods, breaker, probe PNG |
+| `src/steward/core/tags/` | Core tags (ADR 0025): `names.py` (`normalize`, `key`, `is_within`, `parent`, `TagError`), `store.py` (`Tag`, `USABLE`, `VOCABULARY_CHANGED`, lookups `get/find/resolve/require/canonical/vocabulary`, `create`, `ensure`, `add_alias`, `delete_unused`, `update_tag`, `subtree`, `rename(keep_alias=)`, `prepare_merge`/`merge`/`unmerge`, `file_state`, `file_rows`, `set_file`, `write_suggestions`, `suggestions`), `effective.py` (`rule_names`, `file_tags`), `actions.py` (`tag.add` auto, `tag.remove` proposal, `tag.create`, `tag.update`, `tag.merge`; `register_tag_actions`), `io.py` (`parse`, `import_tags` additive, `export_tags`, `dump`), `bootstrap.py` (`sample`, `suggest`; role `generate_tags`) |
+| `src/steward/modules/fields/` | Built-in module `fields` 0.1.0 (requires `documents`): `FieldsConfig` (`max_chars` 6000, `max_value_chars` 200), role `fields`, stage `fields.extract` (`mime` → `fields`; optional `text:ocr`, `text`; documents, or image/text where the type has `fields` or adds the stage); `extract.py` (`DOC_TYPES`, `DEFAULT_FIELDS`, `field_names`, `schema` (cached, all nullable), `messages`, `clean`) |
+| `src/steward/modules/tags/` | Built-in module `tags` 0.1.0 (requires `documents`): `TagsConfig` (`max_tags` 5, `max_chars` 3000, `max_vocabulary` 500), roles `apply_tags`, `generate_tags`, stage `tags.apply` (`mime` → `tags`; optional `text:ocr`, `text`, `text:caption`, `fields`; skipped "no tags yet" / "no text or description"), page `tags.page` `/ui/tags` (`routes.py`: list, edit, create, update, merge, retag, undo; `tree()`); `apply.py` (`schema(names, max_tags)` Literal enum, `messages`) |
+| `tests/integration/test_tags.py`, `tests/unit/test_tags_fields_helpers.py` | Fields + tags end to end on two layouts (fake model answers per role by model name): fields cleaning, property filters, skip → rerun on new tags, decisions vs AI/rules + undo, hierarchy/alias/scope filters and counts, rename/merge/undo, deprecated not offered, YAML round trip, bootstrap never sees locked text, `/ui/tags` + file page + `/ui/search?tag=` + API, CLI; unit: names, `parse_query`, fields cleaning, enum schema, tree, YAML parsing |
 | `tests/photos_support.py`, `tests/integration/test_photos.py`, `tests/unit/test_photos_helpers.py` | Fake `exiftool` (answers the JSON after `EXIF:` in the file; `SLEEP`, `FAIL`; `calls.jsonl`), `make_jpeg(size, color=, exif=, orientation=)` (EXIF JSON in a JPEG comment), `make_png`; end to end on two layouts with the fake model server (`describe` picks a caption by pixel colour): EXIF incl. metadata-only folders, missing/hanging exiftool, captions → chunks → words + meaning, locked scope, small images, think blocks, back-fill when `caption` is mapped, outage, OCR + caption on one image, file page Details, `steward files info`; unit: dates, normalize, prepare, clean, `detail_rows` |
 | `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
-| `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `files text LIB:PATH` (all text artifacts with page/heading lines), `search QUERY [--library --folder --kind --limit --in all|names|text]` (snippets with `[match]`), `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread; `files info LIB:PATH` (file id, content hash, MIME/kind, stage results with reasons, properties) |
+| `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `files text LIB:PATH` (all text artifacts with page/heading lines), `search QUERY [--library --folder --kind --limit --in all|names|text]` (snippets with `[match]`), `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread; `files info LIB:PATH` (file id, content hash, MIME/kind, stage results with reasons, properties, tags), `search --tag`, `tags list|import FILE [--retag]|export [--output]|bootstrap [--sample --max --output]|add|remove LIB:PATH TAG|retag [--all]` |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
 | `examples/hello-module/` | Out-of-tree module `hello` 0.3.0 (dist `steward-hello`): config `greeting`; registers health check `hello`, stage `hello.lines` (text files ≤10 MiB → `hello_line_counts` in `index.db`, migration `migrations/index/0001`), subscriber `hello.greet` (`file.discovered`, logs), UI page `hello.page` at `/ui/hello`. Dev dependency only; not in the image |
 | `tests/unit/test_auth_primitives.py`, `tests/integration/test_auth.py`, `test_auth_cli.py` | Password hashing/rules, secrets/CSRF, client IP, settings bounds; the `Auth` service end to end (sessions, expiry, lockouts, re-auth windows incl. 0 and off, tokens can't do session things, password change/reset, prune, health); CLI. Integration tests patch `passwords._hasher` with cheap parameters (fixture `fast_hashes`) |
@@ -998,8 +1062,40 @@ steps, log). Read them first if present. A maintainer-only design document
 - `RoleConfig.reasoning` → `reasoning_effort` in `Gateway.call` (not in the model key).
   Thinking models with the default spend `max_tokens` on reasoning and answer nothing.
 - Not yet: XMP sidecars (`sidecar.sync`, chunk 6), `ImageSearch` (waits for a
-  consumer), property filters in search, HEIC/RAW descriptions, properties in
-  `/api/v1/files/{id}`.
+  consumer), HEIC/RAW descriptions, properties in `/api/v1/files/{id}`.
+
+### Fields and tags (implemented; ADR 0025)
+- `fields` module (`src/steward/modules/fields/`: `__init__` stage, `extract.py`
+  schema/prompt/cleaning, `prompts/fields/fields.v1.md`): `fields.extract` writes
+  properties under artifact `fields`. Version = 100*FIELDS_VERSION + PROMPT_VERSION.
+- Search (`core/search.py`): `SearchFilters.tags` / `.properties` (`PropertyFilter`);
+  `with_query_filters` runs first in every search function and pulls `tag:`, `kind:`
+  and `KEY<op>VALUE` (only keys present in `properties`, found by a skip-scan) out of
+  the query. `_conditions(conn, policy, filters, scope)` now needs the connection.
+  `_tag_condition` = user-added ∪ (AI suggestions − removed) ∪ (folders whose type has
+  the tag in `default_tags`, nearest-mapped wins, − removed); a parent name that isn't
+  a tag still matches its children. `tag_counts(dbs, policy, scope=)`.
+- Core tags (`core/tags/`): `names.py` (normalize, key = casefold, `is_within`),
+  `store.py` (vocabulary CRUD, `rename` keeps aliases, `prepare_merge`/`merge`/
+  `unmerge`, `set_file`, `write_suggestions`; events `tag.*`, `VOCABULARY_CHANGED`),
+  `effective.py` (`file_tags`), `actions.py` (`tag.add|remove|create|update|merge`),
+  `io.py` (YAML parse/import/export), `bootstrap.py` (`generate_tags`). State rev
+  `0007` (`tags`, `file_tags`), index rev `0007` (`tag_suggestions`, property indexes).
+- Executor gotcha: `GuardedFS.write_state` ops run after `apply` returns and after
+  `inverse` is computed, so `apply` must read undo data with `_read` first and return
+  it in `Applied.result`; never fill `result` inside a state op.
+- `core.tags.retag_untagged` subscriber: on `VOCABULARY_CHANGED`, `stages.rerun(stage,
+  statuses=("skipped",), also=<no tag_suggestions>)`. Done results with tags stay.
+- `tags` module (`src/steward/modules/tags/`: `__init__` stage + roles, `apply.py`
+  enum schema/prompt, `routes.py` `/ui/tags`, templates, `static/tags.css`). Health
+  skips warnings for unmapped roles no stage uses (`generate_tags`).
+- `files_ui`: `/view` shows tags (via `FileDetails.tags`), POST `/tag` and `/untag`
+  run `tag.add`/`tag.remove` and redirect with the Undo bar. `/ui/search?tag=` puts
+  `tag:"…"` into the query; `/api/v1/search?tag=` (repeatable).
+- Backups export `tags`, `file_tags`. Tests: `tests/integration/test_tags.py` (two
+  layouts, fake model per role by model name), `tests/unit/test_tags_fields_helpers.py`.
+- Not yet: tags in listings and `/api/v1/files/{id}`, sidecars (chunk 6), AI tag tools
+  (Phase 4), `tag-gen` (Phase 6), vocabulary import from the UI.
 
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
@@ -1132,6 +1228,7 @@ uv run steward user list | reset-password | unlock | sessions | settings
 uv run steward tokens list | create LABEL --scope read | revoke ID
 uv run steward search WORDS [--in all|names|text] | files text LIB:PATH   # search; extracted text
 uv run steward models list | models probe [ROLE]     # model roles; test the mapped models
+uv run steward tags list | import F | export | bootstrap | add|remove LIB:PATH TAG | retag [--all]
 uv run steward journal list | journal undo ID | files sensitivity LIB:PATH LEVEL
 uv run steward backup | export --output F            # backups (also nightly + before migrations)
 make check                      # lint typecheck imports test headers licenses

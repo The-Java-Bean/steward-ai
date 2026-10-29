@@ -39,6 +39,16 @@ modules: {}
 #      caption_max_tokens: 512    # longest answer (reasoning models need more)
 #      caption_timeout_s: 60      # time decoding one image may take
 #      caption_memory_mib: 1024
+#  fields:                # facts read from documents (on by default; needs a
+#    settings:            # `fields` model in llm.yaml)
+#      max_chars: 6000    # how much of the start of a document the model reads
+#      max_value_chars: 200
+#  tags:                  # tags chosen from your vocabulary (on by default; needs an
+#    settings:            # `apply_tags` model in llm.yaml, and some tags)
+#      max_tags: 5        # most tags the model chooses for one file
+#      max_chars: 3000    # how much of a file's text the model reads
+#      max_vocabulary: 500  # tags offered to the model
+#      min_vocabulary: 5  # no AI tagging until there are this many tags
 #  search:                # searching by meaning (on by default; needs an `embed`
 #    settings:            # model in llm.yaml, otherwise search works by words)
 #      batch_size: 16     # chunks per request to the embedding model

@@ -19,8 +19,11 @@ from steward.core.db.migrate import CORE_VERSIONS
 from steward.core.discovery.jobs import register_discovery
 from steward.core.executor import register_actions
 from steward.core.stages import register_hash_stage
+from steward.core.tags.actions import register_tag_actions
 from steward.sdk import (
+    TAGS_ARTIFACT,
     Daily,
+    Event,
     EventHandler,
     Every,
     HealthResult,
@@ -32,6 +35,7 @@ from steward.sdk import (
 
 if TYPE_CHECKING:
     from steward.core.runtime import Runtime
+    from steward.core.stages import StageGraph
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +66,7 @@ def register_core(r: Registry, config: Config, dbs: Databases) -> None:
     register_hash_stage(r)
     register_auth(r, Auth(dbs.state, config.steward.auth))
     register_actions(r)
+    register_tag_actions(r)
     r.migrations(CORE_VERSIONS["state"], database="state")
     r.migrations(CORE_VERSIONS["index"], database="index")
 
@@ -157,6 +162,8 @@ def register_models(registrations: Registrations, runtime: Callable[[], Runtime]
             if state.usable:
                 continue
             stages = sorted(s for s in graph.inactive if f"role {name!r}" in graph.inactive[s])
+            if not stages and not state.endpoint:
+                continue  # used on request only (`steward tags bootstrap`), not by stages
             what = f", so {', '.join(stages)} doesn't run" if stages else ""
             off.append(f"role {name!r} ({', '.join(state.modules)}) is {state.problem}{what}")
         if off:
@@ -183,3 +190,33 @@ def register_models(registrations: Registrations, runtime: Callable[[], Runtime]
 
     r.health_check("core.models", models)
     r.health_check("core.embeddings", spaces)
+
+
+RETAG_SUBSCRIBER = "core.tags.retag_untagged"
+
+
+def tag_stage(graph: StageGraph) -> str | None:
+    """The active stage that chooses tags (produces `tags`), if any."""
+    return graph.producers.get(TAGS_ARTIFACT)
+
+
+def register_tags(registrations: Registrations, runtime: Callable[[], Runtime]) -> None:
+    """When a tag becomes usable, run the tag stage again where it was skipped (for
+    example "no tags yet") or chose no tag; tags it already chose stay (docs/adr/0025).
+    Registered before the delivery jobs are made."""
+    from sqlalchemy import select
+
+    from steward.core.db.schema import stage_runs, tag_suggestions
+    from steward.core.stages import rerun
+    from steward.core.tags import VOCABULARY_CHANGED
+
+    r = Registry("core", None, registrations)
+    untagged = stage_runs.c.content_hash.not_in(select(tag_suggestions.c.content_hash))
+
+    def retag(event: Event) -> None:
+        rt = runtime()
+        stage = tag_stage(rt.stages)
+        if stage is not None:
+            rerun(rt.dbs, stage, statuses=("skipped",), also=untagged)
+
+    r.subscribe(VOCABULARY_CHANGED, retag, name=RETAG_SUBSCRIBER)

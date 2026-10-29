@@ -21,6 +21,7 @@ import steward
 from steward.core import auth as steward_auth
 from steward.core import backup, content, queue, stages
 from steward.core import logging as steward_logging
+from steward.core.builtin import tag_stage
 from steward.core.config import (
     CONFIG_DIR_ENV,
     DEFAULT_CONFIG_DIR,
@@ -48,8 +49,14 @@ from steward.core.folders.seed import import_seed
 from steward.core.loader import ModuleLoadError, discover, is_builtin
 from steward.core.privacy import PrivacyRules, set_override
 from steward.core.runtime import Runtime, build_runtime
-from steward.core.search import Mode, SearchError, SearchFilters, search_all
-from steward.sdk import ActionRefused
+from steward.core.search import Mode, SearchError, SearchFilters, search_all, tag_counts
+from steward.core.stages import rerun
+from steward.core.tags import TagError
+from steward.core.tags import bootstrap as tag_bootstrap
+from steward.core.tags import effective as tag_effective
+from steward.core.tags import io as tag_io
+from steward.core.tags import store as tag_store
+from steward.sdk import ActionRefused, ModelUnavailable
 
 app = typer.Typer(
     name="steward",
@@ -74,6 +81,7 @@ user_app = typer.Typer(
 tokens_app = typer.Typer(help="API tokens (scopes: read, propose).", no_args_is_help=True)
 journal_app = typer.Typer(help="Applied actions: list them and undo them.", no_args_is_help=True)
 models_app = typer.Typer(help="Model roles and the models mapped to them.", no_args_is_help=True)
+tags_app = typer.Typer(help="Tags: the vocabulary and files' tags.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
 app.add_typer(jobs_app, name="jobs")
@@ -85,6 +93,7 @@ app.add_typer(user_app, name="user")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(journal_app, name="journal")
 app.add_typer(models_app, name="models")
+app.add_typer(tags_app, name="tags")
 
 CLI_ACTOR = "cli"
 
@@ -663,6 +672,20 @@ def files_info(
         typer.echo(f"{artifact}:")
         for key, value in values.items():
             typer.echo(f"  {key}: {value}")
+    with runtime.dbs.state.read() as state, runtime.dbs.index.read() as index:
+        found = tag_effective.file_tags(
+            state,
+            index,
+            load_policy(state),
+            file_id=row.file_id,
+            content_hash=row.content_hash,
+            library_id=ref.library_id,
+            relpath=ref.relpath,
+        )
+    if found:
+        typer.echo("tags:")
+        for t in found:
+            typer.echo(f"  {t.name} ({t.source}{', ' + t.status if t.status != 'active' else ''})")
 
 
 @files_app.command("text")
@@ -1050,9 +1073,12 @@ def search(
     kind: Annotated[str | None, typer.Option(help="document, image, video, audio, text...")] = None,
     limit: int = 20,
     mode: Annotated[str, typer.Option("--in", help="all (names and text), names or text.")] = "all",
+    tag: Annotated[
+        list[str] | None, typer.Option(help="Only files with this tag (or one under it).")
+    ] = None,
 ) -> None:
     """Search file names, paths and extracted text (never inside locked or hidden
-    folders)."""
+    folders). The query may hold filters too: tag:NAME, kind:image, amount>100."""
     if mode not in ("all", "names", "text"):
         _fail("--in must be all, names or text")
     runtime = _ready_runtime()
@@ -1063,7 +1089,7 @@ def search(
             runtime.dbs,
             policy,
             query,
-            filters=SearchFilters(library=library, folder=folder, kind=kind),
+            filters=SearchFilters(library=library, folder=folder, kind=kind, tags=tuple(tag or ())),
             limit=limit,
             mode=cast(Mode, mode),
             embed=runtime.query_embedder,
@@ -1102,6 +1128,144 @@ def journal_undo(entry_id: int) -> None:
     except (ActionRefused, ActionFailed) as exc:
         _fail(str(exc))
     typer.echo(f"{entry.entry_id}: {entry.summary}")
+
+
+# --- tags ------------------------------------------------------------------------
+
+
+@tags_app.command("list")
+def tags_list() -> None:
+    """The vocabulary with how many files (outside locked folders) have each tag."""
+    runtime = _ready_runtime()
+    with runtime.dbs.state.read() as conn:
+        vocabulary = tag_store.vocabulary(conn)
+        policy = load_policy(conn)
+    counts = tag_counts(runtime.dbs, policy)
+    for t in vocabulary:
+        status = f"  [{t.status}]" if t.status != "active" else ""
+        aliases = f"  (also {', '.join(t.aliases)})" if t.aliases else ""
+        typer.echo(f"{t.name}  {counts.get(t.name, 0)}{status}{aliases}")
+        if t.description:
+            typer.echo(f"    {t.description}")
+    if not vocabulary:
+        typer.echo("no tags yet (steward tags import FILE, or steward tags bootstrap)")
+
+
+def _retag(runtime: Runtime, *, everything: bool) -> int:
+    stage = tag_stage(runtime.stages)
+    if stage is None:
+        _fail("no stage chooses tags (enable the tags module and map the apply_tags role)")
+    return rerun(runtime.dbs, stage, statuses=None if everything else ("skipped",))
+
+
+@tags_app.command("import")
+def tags_import(
+    file: Annotated[Path, typer.Argument(help="YAML: tags: [{name, description, aliases}]")],
+    retag: Annotated[bool, typer.Option(help="Then have every file tagged again.")] = False,
+) -> None:
+    """Add the tags in a YAML file (only adds: nothing is renamed or removed)."""
+    runtime = _ready_runtime()
+    try:
+        parsed = tag_io.parse(file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, TagError) as exc:
+        _fail(f"{file}: {exc}")
+    with runtime.dbs.state.write() as conn:
+        result = tag_io.import_tags(conn, parsed, actor=CLI_ACTOR)
+    for problem in result.problems:
+        typer.echo(f"skipped {problem}", err=True)
+    typer.echo(
+        f"{len(result.created)} created, {len(result.described)} described, "
+        f"{len(result.aliases)} alias(es) added"
+    )
+    if retag:
+        typer.echo(f"{_retag(runtime, everything=True)} result(s) dropped; tagging runs again")
+
+
+@tags_app.command("export")
+def tags_export(
+    output: Annotated[Path | None, typer.Option(help="Write here instead of printing.")] = None,
+) -> None:
+    """The vocabulary as YAML that `steward tags import` reads (deprecated tags left out)."""
+    runtime = _ready_runtime()
+    with runtime.dbs.state.read() as conn:
+        text = tag_io.export_tags(conn)
+    if output is None:
+        typer.echo(text, nl=False)
+    else:
+        output.write_text(text, encoding="utf-8")
+        typer.echo(f"wrote {output}")
+
+
+@tags_app.command("bootstrap")
+def tags_bootstrap(
+    sample: Annotated[int, typer.Option(min=5, max=1000, help="Files to learn from.")] = 60,
+    max_tags: Annotated[int, typer.Option("--max", min=5, max=200, help="Most tags.")] = 40,
+    output: Annotated[
+        Path | None, typer.Option(help="Default: <data dir>/bootstrap/tags.yaml")
+    ] = None,
+) -> None:
+    """Ask the generate_tags model for a first vocabulary from samples of your files
+    (never locked, hidden or excluded ones). Writes YAML to edit, then import."""
+    runtime = _ready_runtime()
+    with runtime.dbs.state.read() as conn:
+        policy = load_policy(conn)
+    try:
+        found = tag_bootstrap.suggest(
+            runtime.dbs,
+            policy,
+            runtime.gateway,
+            samples=sample,
+            max_tags=max_tags,
+            progress=lambda text: typer.echo(text, err=True),
+        )
+    except (tag_bootstrap.BootstrapError, ModelUnavailable, ValueError) as exc:
+        _fail(str(exc))
+    target = output or runtime.config.data_dir / "bootstrap" / "tags.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(tag_io.dump(found), encoding="utf-8")
+    typer.echo(f"{len(found.tags)} tag(s) suggested: {target}")
+    typer.echo(f"edit it, then: steward tags import {target}")
+
+
+def _tag_file(action: str, path: str, tag: str) -> None:
+    runtime = _ready_runtime()
+    try:
+        entry = runtime.executor.run(
+            action, {"path": path, "tag": tag}, actor=CLI_ACTOR, confirmed=True
+        )
+    except (ActionRefused, ActionFailed) as exc:
+        _fail(str(exc))
+    typer.echo(f"{entry.entry_id}: {entry.summary}")
+
+
+@tags_app.command("add")
+def tags_add(
+    path: Annotated[str, typer.Argument(help="library:path of a file")],
+    tag: Annotated[str, typer.Argument(help="Tag name (created if it's new)")],
+) -> None:
+    """Tag a file (journaled; `steward journal undo` reverts it)."""
+    _tag_file("tag.add", path, tag)
+
+
+@tags_app.command("remove")
+def tags_remove(
+    path: Annotated[str, typer.Argument(help="library:path of a file")],
+    tag: Annotated[str, typer.Argument(help="Tag name")],
+) -> None:
+    """Remove a tag from a file; it stays removed even if the AI or the folder type
+    would give it."""
+    _tag_file("tag.remove", path, tag)
+
+
+@tags_app.command("retag")
+def tags_retag(
+    all_files: Annotated[
+        bool, typer.Option("--all", help="Every file, not only the ones skipped.")
+    ] = False,
+) -> None:
+    """Have tags chosen again (in the background, by `steward serve`/`worker`)."""
+    runtime = _ready_runtime()
+    typer.echo(f"{_retag(runtime, everything=all_files)} result(s) dropped; tagging runs again")
 
 
 @app.command("backup")

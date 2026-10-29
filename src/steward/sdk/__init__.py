@@ -84,6 +84,7 @@ from steward.sdk.stages import (
     TextPart,
 )
 from steward.sdk.state import StateAccess, UTCDateTime, utcnow
+from steward.sdk.tags import TAGS_ARTIFACT, FileTag, TagInfo, Tags, TagSource, TagStatus
 from steward.sdk.ui import Badge, UiPage
 from steward.sdk.web import (
     ActionDone,
@@ -114,6 +115,7 @@ __all__ = [
     "LANES",
     "MATCH_MARKERS",
     "MODULE_NAME_PATTERN",
+    "TAGS_ARTIFACT",
     "TOKEN_PATTERN",
     "WORKER_LANES",
     "ActionDone",
@@ -141,6 +143,7 @@ __all__ = [
     "FileDetails",
     "FileInfo",
     "FilePage",
+    "FileTag",
     "Files",
     "FolderInfo",
     "FolderListing",
@@ -200,6 +203,10 @@ __all__ = [
     "StepOutcome",
     "StructuredOutputError",
     "Subscription",
+    "TagInfo",
+    "TagSource",
+    "TagStatus",
+    "Tags",
     "TextPart",
     "UTCDateTime",
     "UiPage",

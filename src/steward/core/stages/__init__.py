@@ -11,6 +11,7 @@ from steward.core.stages.jobs import (
     full_pass_needed,
     register_hash_stage,
     register_stage_jobs,
+    rerun,
     tick,
 )
 from steward.core.stages.planner import Planner, stage_job_type
@@ -27,6 +28,7 @@ __all__ = [
     "full_pass_needed",
     "register_hash_stage",
     "register_stage_jobs",
+    "rerun",
     "stage_job_type",
     "tick",
 ]

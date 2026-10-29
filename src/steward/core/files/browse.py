@@ -39,6 +39,7 @@ from steward.core.folders import FolderRef, PathError
 from steward.core.folders.policy import FolderMapping, Policy
 from steward.core.privacy.sharing import SharingRules
 from steward.core.search import Embed, SearchError, SearchFilters, Visibility, search_all
+from steward.core.tags import effective
 from steward.sdk import ActionRefused
 from steward.sdk.web import (
     Crumb,
@@ -269,20 +270,33 @@ class Browser:
         if where.relpath == "" or not stat.S_ISREG(self._stat(where).st_mode):
             raise NotFound(where.path)
         with self.dbs.state.read() as conn:
-            content_hash = conn.execute(
-                select(files.c.content_hash).where(
+            row = conn.execute(
+                select(files.c.file_id, files.c.content_hash).where(
                     files.c.library_id == where.library_id,
                     files.c.relpath == where.relpath,
                     files.c.present.is_(True),
                 )
-            ).scalar_one_or_none()
-        if content_hash is None:
+            ).one_or_none()
+        if row is None:
             return FileDetails()
-        with self.dbs.index.read() as conn:
-            caption = content.read_text(conn, content_hash, CAPTION_ARTIFACT)
-            props = content.properties_of(conn, content_hash)
+        with self.dbs.state.read() as state, self.dbs.index.read() as index:
+            tags = tuple(
+                effective.file_tags(
+                    state,
+                    index,
+                    self.policy,
+                    file_id=row.file_id,
+                    content_hash=row.content_hash,
+                    library_id=where.library_id,
+                    relpath=where.relpath,
+                )
+            )
+            if row.content_hash is None:
+                return FileDetails(tags=tags)
+            caption = content.read_text(index, row.content_hash, CAPTION_ARTIFACT)
+            props = content.properties_of(index, row.content_hash)
         description = " ".join(p.body for p in caption).strip() or None
-        return FileDetails(description=description, properties=props)
+        return FileDetails(description=description, properties=props, tags=tags)
 
     def by_kind(
         self, kind: str, *, library: str | None, scope: Scope, limit: int, offset: int

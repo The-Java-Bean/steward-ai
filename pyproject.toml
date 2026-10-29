@@ -32,10 +32,12 @@ steward = "steward.cli:app"
 # Built-in modules are registered exactly like out-of-tree ones (see docs/modules.md).
 [project.entry-points."steward.modules"]
 documents = "steward.modules.documents:DocumentsModule"
+fields = "steward.modules.fields:FieldsModule"
 files_ui = "steward.modules.files_ui:FilesUiModule"
 photos = "steward.modules.photos:PhotosModule"
 search = "steward.modules.search:SearchModule"
 shares = "steward.modules.shares:SharesModule"
+tags = "steward.modules.tags:TagsModule"
 
 [dependency-groups]
 dev = [

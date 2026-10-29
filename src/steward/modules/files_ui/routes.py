@@ -43,9 +43,13 @@ DONE = {
     "lock": "Folder locked. It now shows only in the Locked Folder.",
     "permanent": "The lock is now permanent.",
     "unlock": "Folder unlocked. It shows in normal views again.",
+    "tag": "Tag added.",
+    "untag": "Tag removed.",
 }
 """Messages after a redirect (`?did=<key>&n=<count>`): fixed text, nothing reflected."""
 
+MAX_SUGGESTIONS = 2000
+"""Tag names offered while typing on the file page."""
 PathQ = Annotated[str, Query(max_length=4096)]
 Paths = Annotated[list[str], Query(alias="path", max_length=MAX_SELECTION)]
 ScopeQ = Annotated[Scope, Query()]
@@ -155,8 +159,27 @@ def make_router(scope: Scope) -> APIRouter:
         context["back"] = url(listing.path)
         return web.render("browse.html", context)
 
+    def view_url(path: str, **extra: Any) -> str:
+        query = urlencode({"path": path, **extra}, safe=":/", quote_via=quote)
+        return f"{base}/view?{query}"
+
+    def tag_search(name: str) -> str:
+        if locked:  # the Locked Folder's own search understands `tag:`
+            return f"{base}/search?" + urlencode({"q": f'tag:"{name}"'}, quote_via=quote)
+        return "/ui/search?" + urlencode({"tag": name}, quote_via=quote)
+
     @router.get("/view")
-    def view(web: WebDep, path: PathQ) -> Response:
+    def view(
+        web: WebDep,
+        path: PathQ,
+        did: Annotated[str, Query(max_length=16)] = "",
+        undo: Annotated[str, Query(max_length=64)] = "",
+    ) -> Response:
+        return file_page(web, path, did=did, undo=undo)
+
+    def file_page(
+        web: WebDep, path: str, *, did: str = "", undo: str = "", error: str | None = None
+    ) -> Response:
         entry = web.files.entry(path, scope=scope)
         if entry.kind == "dir":
             return web.redirect(url(path))
@@ -176,8 +199,38 @@ def make_router(scope: Scope) -> APIRouter:
                 cut=cut,
                 description=details.description,
                 details=detail_rows(details),
+                tags=[(t, tag_search(t.name)) for t in details.tags],
+                vocabulary=[t.name for t in web.tags.vocabulary(counts=False)][:MAX_SUGGESTIONS],
+                done_notice=_done(did, 1),
+                undo=",".join(str(i) for i in _undo_ids(undo)),
+                error=error,
             ),
+            status=409 if error else 200,
         )
+
+    def tag_change(web: WebDep, action: str, path: str, tag: str, did: str) -> Response:
+        entry = web.files.entry(path, scope=scope)
+        try:
+            done = web.actions.run(action, {"path": entry.path, "tag": tag})
+        except (ActionRefused, ActionFailed) as exc:
+            return file_page(web, entry.path, error=str(exc))
+        return web.redirect(view_url(entry.path, did=did, undo=done.entry_id))
+
+    @router.post("/tag")
+    def add_tag(
+        web: WebDep,
+        path: Annotated[str, Form(max_length=4096)],
+        tag: Annotated[str, Form(min_length=1, max_length=300)],
+    ) -> Response:
+        return tag_change(web, "tag.add", path, tag, "tag")
+
+    @router.post("/untag")
+    def remove_tag(
+        web: WebDep,
+        path: Annotated[str, Form(max_length=4096)],
+        tag: Annotated[str, Form(min_length=1, max_length=300)],
+    ) -> Response:
+        return tag_change(web, "tag.remove", path, tag, "untag")
 
     @router.get("/raw")
     def raw(web: WebDep, path: PathQ, inline: bool = False) -> Response:

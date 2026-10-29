@@ -43,6 +43,8 @@ from steward.core.folders.types import (
     check_type_name,
     resolve_types,
 )
+from steward.core.tags import store as tag_store
+from steward.core.tags.names import TagError
 
 STEWARD_DIR = ".steward"
 DEFAULT_ROLE_PATHS: dict[Role, tuple[str, str]] = {
@@ -285,6 +287,10 @@ def define_type(
     settings = definition.model_dump(mode="json", exclude_none=True, exclude={"extends"})
     _check_resolves(conn, name, definition)
     now = now or utcnow()
+    try:
+        tag_store.ensure(conn, definition.default_tags or (), actor=actor, now=now)
+    except TagError as exc:
+        raise FolderTypeError(f"type {name!r}: default tag: {exc}") from None
     existing = conn.execute(
         select(folder_types.c.extends, folder_types.c.settings).where(folder_types.c.name == name)
     ).one_or_none()

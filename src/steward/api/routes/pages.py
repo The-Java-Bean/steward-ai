@@ -53,10 +53,13 @@ def search_page(
     library: Annotated[str, Query(max_length=64)] = "",
     page: Annotated[int, Query(ge=1, le=1000)] = 1,
     mode: Annotated[Mode, Query(alias="in")] = "all",
+    tag: Annotated[str, Query(max_length=300)] = "",
 ) -> Response:
     runtime = _runtime(request)
     with runtime.dbs.state.read() as conn:
         policy = load_policy(conn)
+    if tag.strip() and '"' not in tag:  # a link from a tag: the filter goes in the box
+        q = f'tag:"{tag.strip()}" {q}'.strip()
     context: dict[str, Any] = {
         "q": q,
         "kind": kind,

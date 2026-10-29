@@ -9,6 +9,7 @@ only level module pages have).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -22,13 +23,17 @@ from fastapi.responses import Response, StreamingResponse
 from steward.api.security import api_state, require_principal, safe_next
 from steward.api.templating import redirect, render
 from steward.core.auth import Principal
+from steward.core.builtin import tag_stage
 from steward.core.executor import ActionFailed, Executor, SensitiveActionError
 from steward.core.executor.guarded import check_segments, split_path
 from steward.core.files import READ_CHUNK, Browser, OpenFile, stream_zip
 from steward.core.folders import load_policy
 from steward.core.privacy.sharing import HIDDEN, SharingRules
 from steward.core.runtime import Runtime
-from steward.sdk import ActionRefused, PathPrivacy, StateAccess
+from steward.core.search import tag_counts
+from steward.core.stages import rerun
+from steward.core.tags import store as tag_store
+from steward.sdk import ActionRefused, PathPrivacy, StateAccess, TagInfo
 from steward.sdk.web import (
     ActionDone,
     ActionPreview,
@@ -96,6 +101,10 @@ class WebHandle:
     @property
     def viewer(self) -> Viewer:
         return Viewer(self.principal.user.username, self.principal.actor)
+
+    @property
+    def tags(self) -> WebTags:
+        return WebTags(self)
 
     @property
     def module(self) -> str:
@@ -340,6 +349,27 @@ def _chunks(opened: OpenFile, start: int, end: int) -> Iterator[bytes]:
             yield data
     finally:
         opened.close()
+
+
+class WebTags:
+    def __init__(self, web: WebHandle) -> None:
+        self.web = web
+
+    def vocabulary(self, *, counts: bool = True) -> list[TagInfo]:
+        runtime = self.web.runtime
+        with runtime.dbs.state.read() as conn:
+            found = tag_store.vocabulary(conn)
+        if not counts:
+            return found
+        numbers = tag_counts(runtime.dbs, self.web.browser().policy)
+        return [dataclasses.replace(t, files=numbers.get(t.name, 0)) for t in found]
+
+    def retag(self, *, everything: bool = False) -> int:
+        runtime = self.web.runtime
+        stage = tag_stage(runtime.stages)
+        if stage is None:
+            return 0
+        return rerun(runtime.dbs, stage, statuses=None if everything else ("skipped",))
 
 
 class WebActions:

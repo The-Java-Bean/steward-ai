@@ -1,0 +1,12 @@
+{% if done_notice or undo %}
+<div class="notice notice-bar" role="status">
+  {% if done_notice %}<span>{{ done_notice }}</span>{% endif %}
+  {% if undo %}
+  <form method="post" action="{{ path }}/undo">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="entry" value="{{ undo }}">
+    <button type="submit" class="small secondary">Undo</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}

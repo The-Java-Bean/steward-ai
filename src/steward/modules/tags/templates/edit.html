@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ tag.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/tags.css">{% endblock %}
+{% block content %}
+<p><a href="{{ path }}">← Tags</a></p>
+<h1>{{ tag.name }}</h1>
+<p class="hint">{{ tag.status }}{% if tag.aliases %} · also known as {{ tag.aliases|join(', ') }}{% endif %}</p>
+
+<form method="post" action="{{ path }}/update">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="tag" value="{{ tag.name }}">
+  <label>Name <input name="new_name" value="{{ tag.name }}" maxlength="200" required></label>
+  <p class="hint">Renaming moves the tags under it too; the old names keep working.</p>
+  <label>Description <input name="description" value="{{ tag.description }}" maxlength="500"></label>
+  <label>Status
+    <select name="status">
+      <option value="active"{% if tag.status in ('active', 'ai-created') %} selected{% endif %}>{{ 'accepted' if tag.status == 'ai-created' else 'active' }}</option>
+      <option value="deprecated"{% if tag.status == 'deprecated' %} selected{% endif %}>deprecated (kept on files, never chosen again)</option>
+    </select>
+  </label>
+  <button type="submit">Save</button>
+</form>
+
+{% if others %}
+<h2>Merge</h2>
+<form method="post" action="{{ path }}/merge">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="tag" value="{{ tag.name }}">
+  <label>Merge {{ tag.name }} into
+    <select name="into">{% for o in others %}<option value="{{ o.name }}">{{ o.name }}</option>{% endfor %}</select>
+  </label>
+  <p class="hint">Files tagged {{ tag.name }} get the other tag, and {{ tag.name }} becomes another name for it.</p>
+  <button type="submit" class="secondary">Merge</button>
+</form>
+{% endif %}
+{% endblock %}

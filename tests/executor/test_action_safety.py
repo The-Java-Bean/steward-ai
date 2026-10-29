@@ -20,8 +20,16 @@ from support import make_runtime
 from steward.core.executor import ActionFailed
 from steward.sdk import ActionRefused, ActionType, PathField
 
-NO_EXAMPLES = {"folder.unlock", "file.upload"}
-"""Action types that need setup the shared tree doesn't have; tested elsewhere."""
+NO_EXAMPLES = {
+    "folder.unlock",
+    "file.upload",
+    "tag.remove",
+    "tag.create",
+    "tag.update",
+    "tag.merge",
+}
+"""Action types that need setup the shared tree doesn't have, or touch no paths (the
+tag vocabulary); tested elsewhere (tests/integration/test_tags.py)."""
 
 
 def _action_types() -> dict[str, ActionType]:

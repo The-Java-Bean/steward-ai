@@ -3,6 +3,7 @@
 {% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
 {% block content %}
 {% include "files_ui/_back.html" %}
+{% include "files_ui/_undo.html" %}
 <h1 class="filename">{{ entry.name }}</h1>
 <p class="hint">{{ entry.mime or 'unknown type' }} · {{ entry.size|filesizeformat }}{% if entry.modified %} · modified {{ entry.modified.strftime('%Y-%m-%d %H:%M') }}{% endif %}</p>
 <div class="toolbar">
@@ -30,6 +31,34 @@
   <p class="hint">No preview for this kind of file.</p>
 {% endif %}
 </div>
+<section class="tags" aria-labelledby="tags-heading">
+  <h2 id="tags-heading">Tags</h2>
+  {% if tags %}
+  <ul class="tag-list">
+  {% for t, link in tags %}
+    <li class="tag tag-{{ t.source }}{% if t.status == 'deprecated' %} deprecated{% endif %}">
+      <a href="{{ link }}">{{ t.name }}</a>
+      <span class="tag-source" title="{{ {'user': 'added by you', 'rule': 'from the folder type', 'ai': 'chosen by the AI'}[t.source] }}">{{ {'user': 'you', 'rule': 'folder', 'ai': 'AI'}[t.source] }}</span>
+      <form method="post" action="{{ base }}/untag">
+        <input type="hidden" name="csrf_token" value="{{ form_token }}">
+        <input type="hidden" name="path" value="{{ entry.path }}">
+        <input type="hidden" name="tag" value="{{ t.name }}">
+        <button type="submit" class="link" aria-label="Remove the tag {{ t.name }}" title="Remove">×</button>
+      </form>
+    </li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">No tags.</p>
+  {% endif %}
+  <form method="post" action="{{ base }}/tag" class="add-tag">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="path" value="{{ entry.path }}">
+    <label>Add a tag <input name="tag" list="tag-names" required maxlength="200" autocomplete="off"></label>
+    <datalist id="tag-names">{% for name in vocabulary %}<option value="{{ name }}">{% endfor %}</datalist>
+    <button type="submit" class="small secondary">Add</button>
+  </form>
+</section>
 {% if description or details %}
 <section class="details" aria-labelledby="details-heading">
   <h2 id="details-heading">Details</h2>

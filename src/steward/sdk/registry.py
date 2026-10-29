@@ -44,8 +44,8 @@ type Exporter = Callable[[Connection], Mapping[str, list[dict[str, Any]]]]
 Database = Literal["state", "index"]
 """`state` holds what can't be rebuilt; `index` holds what can (docs/adr/0001)."""
 
-CORE_ACTION_AREAS = ("file", "folder")
-"""Action names the core registers without its `core.` prefix (`file.move`)."""
+CORE_ACTION_AREAS = ("file", "folder", "tag")
+"""Action names the core registers without its `core.` prefix (`file.move`, `tag.add`)."""
 
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
 EVENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")

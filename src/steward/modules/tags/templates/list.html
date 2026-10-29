@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Tags{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/tags.css">{% endblock %}
+{% block content %}
+<h1>Tags</h1>
+<p class="hint">Your tag vocabulary. Files get tags from you, from their folder type's default tags, and from the AI, which only chooses tags listed here. Tags you remove from a file stay removed.</p>
+{% include "tags/_done.html" %}
+
+{% if review %}
+<section aria-labelledby="review-heading" class="review">
+  <h2 id="review-heading">To review</h2>
+  <p class="hint">Tags an AI created. They are used meanwhile; accept or deprecate them.</p>
+  <ul class="plain">
+  {% for t in review %}
+    <li>
+      <a href="{{ search }}?tag={{ t.name|urlencode }}">{{ t.name }}</a>{% if t.description %} <span class="hint">· {{ t.description }}</span>{% endif %}
+      <form method="post" action="{{ path }}/update" class="inline">
+        <input type="hidden" name="csrf_token" value="{{ form_token }}">
+        <input type="hidden" name="tag" value="{{ t.name }}">
+        <button type="submit" name="status" value="active" class="small">Accept</button>
+        <button type="submit" name="status" value="deprecated" class="small secondary">Deprecate</button>
+      </form>
+    </li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section aria-labelledby="new-heading">
+  <h2 id="new-heading">New tag</h2>
+  <form method="post" action="{{ path }}/create" class="new-tag">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <label>Name <input name="name" required maxlength="200" placeholder="finance/receipt"></label>
+    <label>Description <input name="description" maxlength="500" placeholder="What it's for (the AI reads this)"></label>
+    <button type="submit" class="small">Create</button>
+  </form>
+  <p class="hint">Use <code>/</code> for tags under other tags. Searching for a tag also finds the tags under it.</p>
+</section>
+
+<section aria-labelledby="all-heading">
+  <h2 id="all-heading">All tags ({{ count }})</h2>
+  {% if rows %}
+  <table class="tags">
+    <thead><tr><th>Tag</th><th class="num">Files</th><th>Description</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}{% set t = row.tag %}
+      <tr{% if t and t.status == 'deprecated' %} class="deprecated"{% endif %}>
+        <td class="depth-{{ row.depth if row.depth < 6 else 5 }}">
+          {% if t %}<a href="{{ search }}?tag={{ row.name|urlencode }}">{{ row.leaf }}</a>{% else %}<span class="group">{{ row.leaf }}</span>{% endif %}
+          {% if t and t.status != 'active' %} <span class="status">{{ t.status }}</span>{% endif %}
+          {% if t and t.aliases %}<br><span class="hint">also: {{ t.aliases|join(', ') }}</span>{% endif %}
+        </td>
+        <td class="num">{% if t %}{{ t.files }}{% endif %}</td>
+        <td>{% if t %}{{ t.description }}{% endif %}</td>
+        <td class="row-actions">{% if t %}<a href="{{ path }}/edit?tag={{ row.name|urlencode }}">Change</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No tags yet. Create some above, or let <code>steward tags bootstrap</code> suggest a starting set from your files.</p>
+  {% endif %}
+</section>
+
+<section aria-labelledby="retag-heading">
+  <h2 id="retag-heading">Tag files again</h2>
+  <p class="hint">New tags are offered for new and changed files, and to files the AI skipped. To have every file looked at again with the current tags, re-tag everything: that asks the model once per file and can take hours.</p>
+  <form method="post" action="{{ path }}/retag" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <button type="submit" class="small secondary">Tag skipped files</button>
+    <button type="submit" name="everything" value="true" class="small secondary">Re-tag every file</button>
+  </form>
+</section>
+{% endblock %}

@@ -228,9 +228,12 @@ def search(
     offset: Annotated[int, Query(ge=0)] = 0,
     locked: bool = False,
     mode: Annotated[Mode, Query(alias="in")] = "all",
+    tag: Annotated[list[str] | None, Query(max_length=20)] = None,
 ) -> Response:
     """Search file names and paths and the extracted text (`in=all`, the default), or
     only one of them (`in=names`, `in=text`). Text hits carry a `snippet` and `page`.
+    `tag` (repeatable) keeps files having each tag (or one under it); the query may
+    also hold filters (`tag:NAME`, `kind:image`, `amount>100`, `taken:2024`).
     `locked=true` searches only the locked folders and needs a session with a recent
     password check."""
     principal = _reader(request)
@@ -250,6 +253,7 @@ def search(
                 kind=kind,
                 modified_after=modified_after,
                 modified_before=modified_before,
+                tags=tuple(tag or ()),
             ),
             scope="locked" if locked else "normal",
             limit=limit,

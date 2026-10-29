@@ -387,10 +387,28 @@ properties = Table(
     Column("num", Float),
     Column("created_at", UTCDateTime, nullable=False),
     CheckConstraint("type IN ('text', 'int', 'float', 'bool')", name="ck_properties_type"),
+    Index("ix_properties_key_text", "key", "text"),
+    Index("ix_properties_key_num", "key", "num"),
 )
 """Structured metadata per content (EXIF, extracted fields), written by stages through
 `StageContext.write_properties`. Strings are in `text`, numbers and booleans in `num`,
-so SQL can compare either."""
+so SQL can compare either (the indexes serve search filters, index revision 0007)."""
+
+tag_suggestions = Table(
+    "tag_suggestions",
+    index_metadata,
+    Column(
+        "content_hash",
+        Text,
+        ForeignKey("blobs.content_hash", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("tag_id", Integer, primary_key=True),  # `state.db` tags.tag_id
+    Column("created_at", UTCDateTime, nullable=False),
+    Index("ix_tag_suggestions_tag", "tag_id"),
+)
+"""The tags the AI chose for a content (index revision 0007; `StageContext.write_tags`).
+Rebuildable; a file's effective tags combine them with `file_tags` (core.tags)."""
 
 # --- auth and runtime settings (state revision 0004) -------------------------------
 
@@ -541,3 +559,44 @@ uploads = Table(
 """Resumable uploads (`core.executor.uploads`): the bytes so far live in
 `.steward-tmp-up-<upload_id>` inside `library_id:folder`; `received` is how many are
 written (always a chunk boundary). Finished rows point at the `file.upload` entry."""
+
+# --- tags (state revision 0007) -----------------------------------------------------
+
+TAG_STATUSES = ("active", "ai-created", "deprecated", "alias")
+FILE_TAG_STATES = ("added", "removed")
+
+tags = Table(
+    "tags",
+    state_metadata,
+    Column("tag_id", Integer, primary_key=True, autoincrement=True),
+    Column("name", Text, nullable=False),
+    Column("name_key", Text, nullable=False, unique=True),
+    Column("status", Text, nullable=False),
+    Column("target_id", Integer, ForeignKey("tags.tag_id", ondelete="CASCADE")),
+    Column("description", Text, nullable=False, server_default=""),
+    Column("actor", Text, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    Column("updated_at", UTCDateTime, nullable=False),
+    CheckConstraint(
+        "status IN ('active', 'ai-created', 'deprecated', 'alias')", name="ck_tags_status"
+    ),
+    CheckConstraint("(status = 'alias') = (target_id IS NOT NULL)", name="ck_tags_alias_target"),
+    Index("ix_tags_target", "target_id"),
+)
+"""The tag vocabulary (`core.tags`). Names are paths (`finance/receipt`); `name_key` is
+the casefolded name. An `alias` row is an old name (rename) or a merged tag: it points
+at the tag it stands for, and anything stored with its id counts as that tag."""
+
+file_tags = Table(
+    "file_tags",
+    state_metadata,
+    Column("file_id", Text, ForeignKey("files.file_id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.tag_id", ondelete="CASCADE"), primary_key=True),
+    Column("state", Text, nullable=False),
+    Column("actor", Text, nullable=False),
+    Column("changed_at", UTCDateTime, nullable=False),
+    CheckConstraint("state IN ('added', 'removed')", name="ck_file_tags_state"),
+    Index("ix_file_tags_tag", "tag_id", "state"),
+)
+"""Your decisions about a file's tags: `added`, or `removed` (a tag the AI or a folder
+type gave it that you took off). Effective tags are computed (`core.tags.effective`)."""

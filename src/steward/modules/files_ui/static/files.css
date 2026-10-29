@@ -53,3 +53,12 @@ ul.folders li, ul.libraries li { padding: 0.3rem 0; border-bottom: 1px solid var
 .upload-list li.failed .upload-state { color: var(--err-fg); }
 .upload-list li.done .upload-state { color: var(--ok-fg); }
 .checkbox { display: flex; gap: 0.5rem; align-items: baseline; margin: 0.75rem 0; }
+.tag-list { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.6rem; }
+.tag { display: inline-flex; align-items: center; gap: 0.3rem; border: 1px solid var(--line); border-radius: 999px; padding: 0.1rem 0.3rem 0.1rem 0.6rem; }
+.tag form { margin: 0; }
+.tag.deprecated a { text-decoration: line-through; }
+.tag-source { font-size: 0.75rem; color: var(--muted); }
+.tag button.link { background: none; border: none; color: var(--muted); padding: 0 0.2rem; cursor: pointer; font-size: 1rem; line-height: 1; }
+form.add-tag { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+form.add-tag label { margin: 0; }
+form.add-tag input { margin: 0; width: auto; }

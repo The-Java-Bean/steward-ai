@@ -26,8 +26,10 @@ from steward.api import create_app
 from steward.api.security import SAFE_METHODS, level_of
 from steward.core.runtime import Runtime
 from steward.core.setup import SetupToken
+from steward.modules.documents import DocumentsModule
 from steward.modules.files_ui import FilesUiModule
 from steward.modules.shares import SharesModule
+from steward.modules.tags import TagsModule
 from steward.sdk import Registry
 
 PUBLIC = {
@@ -88,7 +90,10 @@ def fast_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def runtime(tmp_path: Path) -> Iterator[Runtime]:
-    rt = make_runtime(tmp_path, (HelloModule, FilesUiModule, SharesModule, _posting_module()))
+    rt = make_runtime(
+        tmp_path,
+        (HelloModule, DocumentsModule, FilesUiModule, SharesModule, TagsModule, _posting_module()),
+    )
     yield rt
     rt.close()
 

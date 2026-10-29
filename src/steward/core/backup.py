@@ -51,6 +51,8 @@ CORE_EXPORT_TABLES: dict[str, tuple[str, ...]] = {
     "files": (),
     "path_history": (),
     "file_sensitivity": (),
+    "tags": (),
+    "file_tags": (),
     "journal": (),
     "settings_kv": (),
     "users": ("password_hash",),

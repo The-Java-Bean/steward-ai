@@ -25,7 +25,7 @@
   {% endif %}
   <button type="submit">Search</button>
 </form>
-<p class="hint">Locked and hidden folders and the trash are never searched here. Text search finds whole words in documents whose text has been extracted; accents and case don't matter. With an embedding model set up, documents about the same thing are found too (marked “related”).</p>
+<p class="hint">Locked and hidden folders and the trash are never searched here. Text search finds whole words in documents whose text has been extracted; accents and case don't matter. With an embedding model set up, documents about the same thing are found too (marked “related”). Filters can go in the box: <code>tag:finance</code> (also finds the tags under it), <code>kind:image</code>, and facts read from files such as <code>doc_type:invoice</code>, <code>amount&gt;100</code> or <code>taken:2024-06</code>; put values with spaces in "quotes".</p>
 
 {% if results is not none %}
 <h2>{{ results.total }}{% if results.capped %}+{% endif %} found</h2>

@@ -247,6 +247,32 @@ Names are snake_case (at most 64 characters, 200 per artifact); values are `str`
 | `chunks` | `documents.chunk` | retrieval units, full-text searchable |
 | `embeddings` | `search.embed` | vectors for searching by meaning |
 | `exif` | `photos.exif` | properties `taken` (ISO 8601, offset or `Z` when known), `camera`, `lens`, `width`, `height`, `orientation` (1-8), `rotation`, `latitude`, `longitude`, `altitude`, `duration_s` |
+| `fields` | `fields.extract` | properties `doc_type` (`invoice`, `receipt`, `bill`, `statement`, `letter`, `contract`, `form`, `report`, `manual`, `certificate`, `ticket`, `note`, `other`), `title`, `date` (`YYYY[-MM[-DD]]`), `sender`, `recipient`, `amount`, `currency` (ISO code), plus the folder type's `fields` |
+| `tags` | `tags.apply` | the AI's tags for the content (`write_tags`); one stage may produce it |
+
+Search filters on properties by name: `doc_type:invoice`, `amount>100`,
+`taken:2024-06` ([ADR 0025](adr/0025-fields-and-tags.md)).
+
+### Tags
+The core keeps the tag vocabulary and each file's tags
+([ADR 0025](adr/0025-fields-and-tags.md)). A stage that produces `tags` reads the
+usable vocabulary and stores its choice; names it doesn't know raise `ValueError`:
+
+```python
+def choose(ctx: StageContext) -> StageResult:  # produces=(TAGS_ARTIFACT,)
+    vocabulary = ctx.tag_vocabulary()  # [TagInfo(name, status, description, aliases)]
+    if not vocabulary:
+        ctx.write_tags([])
+        return StageResult("skipped", "no tags yet")  # runs again when tags are added
+    ctx.write_tags(["finance/receipt"])
+    return StageResult()
+```
+
+Pages get `web.tags.vocabulary()` (with file counts outside locked folders) and
+`web.tags.retag(everything=False)`; `web.files.details(path).tags` is the file's tags
+as `FileTag(name, source, status)` with `source` `user`, `rule` (the folder type's
+`default_tags`) or `ai`. Change tags with the actions `tag.add`, `tag.remove`,
+`tag.create`, `tag.update` and `tag.merge` (`web.actions.run`).
 
 ### Parsing untrusted files
 
@@ -430,6 +456,7 @@ r.ui_page(
   `UnlockPreview`: what unlocking would make visible, or why it can't be unlocked).
   `privacy(paths)` gives each path's `PathPrivacy` (hidden in normal views? shareable,
   and why not?) without reading anything.
+- `web.tags`: `vocabulary(counts=True)`, `retag(everything=False)`.
 - `web.actions`: `preview`, `run`, `run_all` (one password check for a whole selection),
   `undo`. Sensitive actions send the browser to the password page by themselves.
 - `web.viewer`, `web.recently_authenticated()`, `web.require_reauth()`, `web.redirect(url)`

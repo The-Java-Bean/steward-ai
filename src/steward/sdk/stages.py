@@ -28,6 +28,7 @@ from sqlalchemy import Connection
 
 from steward.sdk.jobs import Lane
 from steward.sdk.models import StageModel
+from steward.sdk.tags import TagInfo
 
 IndexPolicy = Literal["full", "metadata", "none"]
 """How much of a folder steward-ai reads: contents, only names and metadata, or nothing."""
@@ -224,6 +225,16 @@ class StageContext(Protocol):
         snake_case (at most 64 characters, 200 per artifact); None values and empty
         strings are left out; a string longer than 2000 characters raises `ValueError`.
         The file manager shows them."""
+        ...
+
+    def tag_vocabulary(self) -> list[TagInfo]:
+        """The tags a stage may choose (`active` and `ai-created`), by name."""
+        ...
+
+    def write_tags(self, names: Sequence[str]) -> None:
+        """Store the tags chosen for this content (names from `tag_vocabulary()`; the
+        stage must produce `tags`), replacing what was stored before. Files with this
+        content show them as `ai` tags unless you removed them there."""
         ...
 
     def model(self, role: str) -> StageModel:

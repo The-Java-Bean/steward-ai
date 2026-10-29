@@ -22,7 +22,11 @@ from steward.core.llm import ChatRequest, EmbedRequest, Gateway
 from steward.core.llm import structured as structured_output
 from steward.core.llm.roles import RoleState
 from steward.core.stages.isolate import run_isolated
+from steward.core.tags import store as tag_store
+from steward.core.tags.names import TagError, normalize
+from steward.core.tags.names import key as tag_key
 from steward.sdk import (
+    TAGS_ARTIFACT,
     BlobInfo,
     ChunkPart,
     FileChanged,
@@ -31,6 +35,7 @@ from steward.sdk import (
     Message,
     PropertyValue,
     StageModel,
+    TagInfo,
     TextPart,
 )
 
@@ -172,6 +177,29 @@ class Context:
         self._allowed(artifact, write=True)
         with self.dbs.index.write() as conn:
             content.write_properties(conn, self.blob.content_hash, artifact, values)
+
+    # --- tags -----------------------------------------------------------------------
+
+    def tag_vocabulary(self) -> list[TagInfo]:
+        with self.dbs.state.read() as conn:
+            return tag_store.vocabulary(conn, usable_only=True)
+
+    def write_tags(self, names: Sequence[str]) -> None:
+        self._allowed(TAGS_ARTIFACT, write=True)
+        with self.dbs.state.read() as conn:
+            rows = tag_store.all_tags(conn)
+        usable = {t.key: t for t in rows if t.status in tag_store.USABLE}
+        ids = []
+        for name in names:
+            try:
+                tag = usable.get(tag_key(normalize(name)))
+            except TagError:
+                tag = None
+            if tag is None:
+                raise ValueError(f"stage {self.stage}: {name!r} isn't a usable tag")
+            ids.append(tag.tag_id)
+        with self.dbs.index.write() as conn:
+            tag_store.write_suggestions(conn, self.blob.content_hash, ids)
 
     # --- models ---------------------------------------------------------------------
 

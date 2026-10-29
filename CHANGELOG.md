@@ -35,6 +35,28 @@ All notable changes to steward-ai are recorded here. The format follows
   and other office files were typed as zip archives in the container image.
 
 ### Added
+- Fields and tags (ADR 0025). New built-in module `fields` (on by default; needs a
+  `fields` model in `llm.yaml`): stage `fields.extract` reads a document's type, title,
+  date, sender, recipient, amount and currency, plus its folder type's `fields`, into
+  properties shown on the file page and in `steward files info`.
+- Tags: a vocabulary in the core (`/` hierarchy, aliases after renames and merges,
+  statuses), each file's tags from you, its folder type's `default_tags` and the AI
+  (your removals always win). New built-in module `tags` (on by default; needs an
+  `apply_tags` model): stage `tags.apply` picks tags from the vocabulary only, and page
+  `/ui/tags` (tree with counts, review of AI-created tags, create / rename / describe /
+  deprecate / merge with Undo, re-tagging). The file page lists a file's tags with add
+  and remove. Action types `tag.add`, `tag.remove`, `tag.create`, `tag.update`,
+  `tag.merge`.
+- Search filters: `tag:NAME` (with the tags under it), `kind:KIND` and property filters
+  such as `doc_type:invoice`, `amount>100`, `taken:2024` in the query of every search;
+  `/ui/search?tag=`, `/api/v1/search?tag=` (repeatable), `steward search --tag`.
+- CLI `steward tags list|import|export|bootstrap|add|remove|retag`; `steward tags
+  bootstrap` suggests a first vocabulary from samples of your files (role
+  `generate_tags`).
+- SDK: `TagInfo`, `FileTag`, `Tags` (`web.tags`), `FileDetails.tags`,
+  `StageContext.tag_vocabulary()` and `write_tags()`, `TAGS_ARTIFACT`; `"tag"` is a core
+  action area.
+- Backups export `tags` and `file_tags`.
 - Photos (ADR 0024). New built-in module `photos` (on by default): stage `photos.exif`
   reads the date taken, camera, lens, size, orientation, GPS position and duration of
   photos and videos with the exiftool program (registered only when it's installed;

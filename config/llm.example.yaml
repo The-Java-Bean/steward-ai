@@ -42,5 +42,21 @@ roles:
     # keeps the reasoning from using up the answer. Any chat role can set it
     # (default | none | low | medium | high; sent as `reasoning_effort`).
     reasoning: none
+  fields:
+    # Used by the `fields` module to read facts from documents (type, title, date,
+    # sender, amount…) with structured output. A small instruction model does well.
+    endpoint: local
+    model: <chat-model>
+    reasoning: none
+  apply_tags:
+    # Used by the `tags` module to choose tags for files from your vocabulary.
+    endpoint: local
+    model: <chat-model>
+    reasoning: none
+  generate_tags:
+    # Used once by `steward tags bootstrap` to suggest a first vocabulary from samples
+    # of your files; a larger model gives better tags. Optional.
+    endpoint: local
+    model: <chat-model>
   # Run `steward models list` to see which roles the enabled modules use, and
   # `steward models probe` to test the mapped models.

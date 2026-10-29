@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from steward.sdk.actions import PathPrivacy
     from steward.sdk.stages import PropertyValue
     from steward.sdk.state import StateAccess
+    from steward.sdk.tags import FileTag, Tags
 
 Scope = Literal["normal", "locked"]
 """`normal`: what every view shows. `locked`: only inside locked folders (re-auth)."""
@@ -109,6 +110,8 @@ class FileDetails:
     """A description of the image (`text:caption`, from the `photos` module)."""
     properties: Mapping[str, Mapping[str, PropertyValue]] = field(default_factory=dict)
     """Structured metadata by artifact (`exif`…), then property name."""
+    tags: tuple[FileTag, ...] = ()
+    """The file's tags, by name."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +328,11 @@ class Web(Protocol):
 
     @property
     def actions(self) -> Actions: ...
+
+    @property
+    def tags(self) -> Tags:
+        """The tag vocabulary (see `steward.sdk.tags`)."""
+        ...
 
     @property
     def csrf_token(self) -> str:

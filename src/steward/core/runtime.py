@@ -15,6 +15,7 @@ from steward.core.builtin import (
     register_core,
     register_deliveries,
     register_models,
+    register_tags,
     register_uploads,
 )
 from steward.core.config import Config, ConfigError
@@ -125,8 +126,9 @@ def build_runtime(
     modules = load_modules(
         enabled, entry_points=entry_points, core=partial(register_core, config=config, dbs=dbs)
     )
-    register_deliveries(modules.registrations, dbs)
     built: list[Runtime] = []
+    register_tags(modules.registrations, lambda: built[0])
+    register_deliveries(modules.registrations, dbs)
     register_backup(modules.registrations, config, lambda: built[0])
     register_uploads(modules.registrations, lambda: built[0])
     roles = resolve_roles(modules.registrations.model_roles(), config.llm)

@@ -13,7 +13,9 @@
 - **All** (`search_all`): the rankings merged by reciprocal rank fusion. `text` mode
   merges words and meaning; `all` adds names.
 
-Filters (all modes): library, folder, kind, size and modification time.
+Filters (all modes): library, folder, kind, size, modification time, tags (a tag also
+finds the tags under it) and properties (EXIF, extracted fields). The query itself may
+carry filters (`parse_query`): `tag:finance kind:image amount>100 taken:2024 rent`.
 
 What can be found depends on the scope, and is decided **in the SQL query**:
 - `normal`: never anything in a locked folder, a hidden folder (`visible: false`), a
@@ -27,6 +29,8 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
+import re
 import sqlite3
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
@@ -40,6 +44,8 @@ from steward.core.embeddings import VectorQuery, load_vec
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import COPY_HOLDING_ROLES, Policy
 from steward.core.folders.store import STEWARD_DIR
+from steward.core.tags.names import TagError, is_within, normalize
+from steward.core.tags.names import key as tag_key
 from steward.sdk import MATCH_MARKERS
 
 type Scope = Literal["normal", "locked"]
@@ -68,6 +74,21 @@ class SearchError(ValueError):
     pass
 
 
+type PropertyOp = Literal[":", "=", ">", ">=", "<", "<="]
+PROPERTY_OPS: tuple[PropertyOp, ...] = (">=", "<=", ":", "=", ">", "<")
+
+
+@dataclass(frozen=True, slots=True)
+class PropertyFilter:
+    """A condition on a property of the file's content (any artifact: `exif`, `fields`…).
+    `:` means "contains" for text and "equals" for numbers; the comparisons compare
+    numbers as numbers and anything else as text (so ISO dates compare correctly)."""
+
+    key: str
+    op: PropertyOp
+    value: str
+
+
 @dataclass(frozen=True, slots=True)
 class SearchFilters:
     library: str | None = None
@@ -79,6 +100,9 @@ class SearchFilters:
     max_size: int | None = None
     modified_after: datetime | None = None
     modified_before: datetime | None = None
+    tags: tuple[str, ...] = ()
+    """Tag names; every one must match (a tag or one under it)."""
+    properties: tuple[PropertyFilter, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +286,7 @@ def _connect(dbs: Databases) -> Iterator[sqlite3.Connection]:
 
 
 def _conditions(
-    policy: Policy, filters: SearchFilters, scope: Scope
+    conn: sqlite3.Connection, policy: Policy, filters: SearchFilters, scope: Scope
 ) -> tuple[list[str], list[Any]] | None:
     """SQL conditions on `files f` (and `idx.blobs b`) for the scope rules and filters.
     None: nothing can match (the locked scope without locked folders)."""
@@ -312,7 +336,289 @@ def _conditions(
     if filters.modified_before is not None:
         where.append("f.mtime_ns < ?")
         args.append(_ns(filters.modified_before))
+    if filters.tags:
+        vocabulary = _Vocabulary.load(conn)
+        for name in filters.tags:
+            clause, values = _tag_condition(vocabulary, policy, name)
+            where.append(clause)
+            args.extend(values)
+    for prop in filters.properties:
+        clause, values = _property_condition(prop)
+        where.append(clause)
+        args.extend(values)
     return where, args
+
+
+# --- tags and properties -------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Tag:
+    tag_id: int
+    key: str
+    name: str
+    target: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Vocabulary:
+    tags: dict[str, _Tag]
+    """name key -> row (aliases too)."""
+
+    @classmethod
+    def load(cls, conn: sqlite3.Connection) -> _Vocabulary:
+        rows = conn.execute("SELECT tag_id, name_key, name, target_id FROM tags").fetchall()
+        return cls({r[1]: _Tag(int(r[0]), r[1], r[2], r[3]) for r in rows})
+
+    def resolve(self, name: str) -> _Tag | None:
+        try:
+            found = self.tags.get(tag_key(normalize(name)))
+        except TagError:
+            return None
+        if found is not None and found.target is not None:
+            return next((t for t in self.tags.values() if t.tag_id == found.target), None)
+        return found
+
+    def canonical(self) -> dict[int, int]:
+        return {
+            t.tag_id: t.target if t.target is not None else t.tag_id for t in self.tags.values()
+        }
+
+
+_REMOVED = (
+    "EXISTS (SELECT 1 FROM file_tags r WHERE r.file_id = f.file_id AND r.state = 'removed' "
+    "AND r.tag_id = {tag})"
+)
+_REMOVED_SUGGESTION = _REMOVED.format(
+    tag="coalesce((SELECT t.target_id FROM tags t WHERE t.tag_id = s.tag_id), s.tag_id)"
+)
+
+
+def _rule_folders(policy: Policy) -> list[tuple[FolderRef, tuple[str, ...], list[FolderRef]]]:
+    """(folder, its type's default tags, the folders inside it with a type of their own)
+    for each library root and each folder mapped to a type that has default tags."""
+    typed = [ref for ref, m in policy.mappings.items() if m.type_name is not None]
+    candidates = [*typed, *(FolderRef(lib, "") for lib in policy.libraries)]
+    found = []
+    for ref in candidates:
+        if ref.library_id not in policy.libraries:
+            continue
+        try:
+            default_tags = policy.settings_for(ref).type.default_tags
+        except PathError:
+            continue
+        if not default_tags:
+            continue
+        inside = [
+            d
+            for d in typed
+            if d != ref
+            and d.library_id == ref.library_id
+            and (ref.relpath == "" or d.relpath.startswith(ref.relpath + "/"))
+        ]
+        nearest = [
+            d
+            for d in inside
+            if not any(o != d and d.relpath.startswith(o.relpath + "/") for o in inside)
+        ]
+        found.append((ref, default_tags, nearest))
+    return found
+
+
+def _tag_condition(vocabulary: _Vocabulary, policy: Policy, name: str) -> tuple[str, list[Any]]:
+    """Files having the tag `name` or one under it: added by you, chosen by the AI for
+    the content or given by the folder's type, and not removed by you."""
+    tag = vocabulary.resolve(name)
+    try:  # a parent that isn't a tag itself (`finance` for `finance/receipt`) works too
+        root = tag.key if tag is not None else tag_key(normalize(name))
+    except TagError:
+        return "0", []
+    members = {
+        t.tag_id for t in vocabulary.tags.values() if t.target is None and is_within(t.key, root)
+    }
+    if not members:
+        return "0", []
+    canon = vocabulary.canonical()
+    ids = sorted(i for i, c in canon.items() if c in members)
+    member_marks = ", ".join("?" for _ in members)
+    id_marks = ", ".join("?" for _ in ids)
+    added = (
+        "EXISTS (SELECT 1 FROM file_tags u WHERE u.file_id = f.file_id "  # noqa: S608 -- only placeholders are interpolated
+        f"AND u.state = 'added' AND u.tag_id IN ({member_marks}))"
+    )
+    suggested = (
+        "EXISTS (SELECT 1 FROM idx.tag_suggestions s WHERE s.content_hash = f.content_hash "  # noqa: S608 -- only placeholders are interpolated
+        f"AND s.tag_id IN ({id_marks}) AND NOT {_REMOVED_SUGGESTION})"
+    )
+    parts = [added, suggested]
+    args: list[Any] = [*sorted(members), *ids]
+    by_key = {t.key: t for t in vocabulary.tags.values()}
+    for ref, default_tags, nearest in _rule_folders(policy):
+        for rule in default_tags:
+            try:
+                row = by_key.get(tag_key(normalize(rule)))
+            except TagError:
+                continue
+            if row is None or canon.get(row.tag_id) not in members:
+                continue
+            clause, values = _under(ref)
+            excluded = [_under(d) for d in nearest]
+            parts.append(
+                "("
+                + " AND ".join(
+                    [clause, *(f"NOT {c}" for c, _ in excluded), "NOT " + _REMOVED.format(tag="?")]
+                )
+                + ")"
+            )
+            args.extend(values)
+            for _, v in excluded:
+                args.extend(v)
+            args.append(canon[row.tag_id])
+    return "(" + " OR ".join(parts) + ")", args
+
+
+def _number(value: str) -> float | None:
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _property_condition(prop: PropertyFilter) -> tuple[str, list[Any]]:
+    number = _number(prop.value)
+    base = (
+        "EXISTS (SELECT 1 FROM idx.properties p "
+        "WHERE p.content_hash = f.content_hash AND p.key = ? AND "
+    )
+    if prop.op == ":":
+        if number is not None:
+            return base + "(p.num = ? OR instr(steward_fold(p.text), ?) > 0))", [
+                prop.key,
+                number,
+                fold(prop.value),
+            ]
+        return base + "instr(steward_fold(p.text), ?) > 0)", [prop.key, fold(prop.value)]
+    op = "=" if prop.op == "=" else prop.op
+    if number is not None:
+        return (
+            base + f"((p.num IS NOT NULL AND p.num {op} ?) OR (p.num IS NULL AND p.text {op} ?)))",
+            [prop.key, number, prop.value],
+        )
+    if prop.op == "=":
+        return base + "steward_fold(p.text) = ?)", [prop.key, fold(prop.value)]
+    return base + f"p.text {op} ?)", [prop.key, prop.value]
+
+
+_FILTER = re.compile(r'(?<!\S)([A-Za-z][A-Za-z0-9_]*)(>=|<=|:|=|>|<)("([^"]*)"|[^\s"]+)(?!\S)')
+_KEYS = (
+    "WITH RECURSIVE k(key) AS (SELECT min(key) FROM idx.properties UNION ALL "
+    "SELECT (SELECT min(key) FROM idx.properties WHERE key > k.key) FROM k "
+    "WHERE k.key IS NOT NULL) SELECT key FROM k WHERE key IS NOT NULL"
+)
+"""Every property name, one index lookup each."""
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedQuery:
+    words: str
+    """The query without the filters."""
+    tags: tuple[str, ...] = ()
+    kind: str | None = None
+    properties: tuple[PropertyFilter, ...] = ()
+
+
+def parse_query(query: str, keys: frozenset[str] | set[str]) -> ParsedQuery:
+    """Take filters out of a query: `tag:NAME`, `kind:KIND` and, for property names in
+    `keys`, `KEY:VALUE`, `KEY=VALUE`, `KEY>VALUE`… (values may be "double quoted").
+    Anything else stays a word."""
+    tags: list[str] = []
+    props: list[PropertyFilter] = []
+    kind: str | None = None
+    kept: list[str] = []
+    last = 0
+    for m in _FILTER.finditer(query):
+        name, op = m.group(1).lower(), m.group(2)
+        value = m.group(4) if m.group(4) is not None else m.group(3)
+        if name == "tag" and op == ":":
+            tags.append(value)
+        elif name == "kind" and op == ":":
+            kind = value.lower()
+        elif name in keys:
+            props.append(PropertyFilter(name, op, value))  # type: ignore[arg-type]
+        else:
+            continue
+        kept.append(query[last : m.start()])
+        last = m.end()
+    kept.append(query[last:])
+    return ParsedQuery(" ".join("".join(kept).split()), tuple(tags), kind, tuple(props))
+
+
+def property_keys(dbs: Databases) -> frozenset[str]:
+    with _connect(dbs) as conn:
+        return frozenset(r[0] for r in conn.execute(_KEYS))
+
+
+def with_query_filters(
+    dbs: Databases, query: str, filters: SearchFilters
+) -> tuple[str, SearchFilters]:
+    """`query` without its filters, and `filters` with them added."""
+    if not _FILTER.search(query):
+        return query, filters
+    parsed = parse_query(query, property_keys(dbs))
+    return parsed.words, dataclasses.replace(
+        filters,
+        tags=(*filters.tags, *parsed.tags),
+        kind=parsed.kind or filters.kind,
+        properties=(*filters.properties, *parsed.properties),
+    )
+
+
+def tag_counts(dbs: Databases, policy: Policy, *, scope: Scope = "normal") -> dict[str, int]:
+    """Tag name -> how many files in `scope` have it (exactly that tag)."""
+    with _connect(dbs) as conn:
+        conditions = _conditions(conn, policy, SearchFilters(), scope)
+        if conditions is None:
+            return {}
+        where, args = conditions
+        vocabulary = _Vocabulary.load(conn)
+        canon = vocabulary.canonical()
+        rules: list[str] = []
+        rule_args: list[Any] = []
+        by_key = {t.key: t for t in vocabulary.tags.values()}
+        for ref, default_tags, nearest in _rule_folders(policy):
+            for rule in default_tags:
+                try:
+                    row = by_key.get(tag_key(normalize(rule)))
+                except TagError:
+                    continue
+                if row is None:
+                    continue
+                clause, values = _under(ref)
+                excluded = [_under(d) for d in nearest]
+                inside = " AND ".join([clause, *(f"NOT {c}" for c, _ in excluded)])
+                rules.append(f"SELECT f.file_id, ? FROM vis f WHERE {inside}")  # noqa: S608 -- only placeholders are interpolated
+                rule_args.extend([canon[row.tag_id], *values])
+                for _, v in excluded:
+                    rule_args.extend(v)
+        union = "".join(f" UNION {r}" for r in rules)
+        visible = " AND ".join(where)
+        rows = conn.execute(
+            "WITH vis AS (SELECT f.file_id, f.content_hash, f.library_id, f.relpath FROM files f "  # noqa: S608 -- only placeholders are interpolated
+            f"LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash WHERE {visible}), "
+            "eff(file_id, tag_id) AS ("
+            "SELECT u.file_id, u.tag_id FROM file_tags u JOIN vis v ON v.file_id = u.file_id "
+            "WHERE u.state = 'added' UNION "
+            "SELECT v.file_id, coalesce(t.target_id, s.tag_id) FROM vis v "
+            "JOIN idx.tag_suggestions s ON s.content_hash = v.content_hash "
+            f"JOIN tags t ON t.tag_id = s.tag_id{union}) "
+            "SELECT e.tag_id, count(*) FROM eff e WHERE NOT EXISTS (SELECT 1 FROM file_tags r "
+            "WHERE r.file_id = e.file_id AND r.tag_id = e.tag_id AND r.state = 'removed') "
+            "GROUP BY e.tag_id",
+            [*args, *rule_args],
+        ).fetchall()
+    names = {t.tag_id: t.name for t in vocabulary.tags.values() if t.target is None}
+    return {names[r[0]]: int(r[1]) for r in rows if r[0] in names}
 
 
 def _check_limits(limit: int, offset: int) -> None:
@@ -375,13 +681,14 @@ def search_files(
 ) -> SearchResults:
     """Files whose path contains every word of `query` (no words: every file the filters
     allow, newest first)."""
+    query, filters = with_query_filters(dbs, query, filters)
     words = tokens(query)
     _check_limits(limit, offset)
-    conditions = _conditions(policy, filters, scope)
-    if conditions is None:
-        return SearchResults([], 0, capped=False)
-    sql_from, args, order, order_args = _name_query(words, *conditions)
     with _connect(dbs) as conn:
+        conditions = _conditions(conn, policy, filters, scope)
+        if conditions is None:
+            return SearchResults([], 0, capped=False)
+        sql_from, args, order, order_args = _name_query(words, *conditions)
         total = _count(conn, sql_from, args)
         rows = conn.execute(
             f"SELECT {FILE_COLUMNS} {sql_from} ORDER BY {order} LIMIT ? OFFSET ?",
@@ -456,13 +763,16 @@ def search_text(
     offset: int = 0,
 ) -> SearchResults:
     """Files whose extracted text has a chunk containing every word of `query`."""
+    query, filters = with_query_filters(dbs, query, filters)
     match = fts_query(tokens(query))
     _check_limits(limit, offset)
-    conditions = _conditions(policy, filters, scope)
-    if match is None or conditions is None:
+    if match is None:
         return SearchResults([], 0, capped=False)
-    sql_from, args = _text_query(match, *conditions)
     with _connect(dbs) as conn:
+        conditions = _conditions(conn, policy, filters, scope)
+        if conditions is None:
+            return SearchResults([], 0, capped=False)
+        sql_from, args = _text_query(match, *conditions)
         total = _count(conn, sql_from, args)
         rows = conn.execute(
             f"SELECT {FILE_COLUMNS}, m.chunk_id, m.page {sql_from} "
@@ -534,6 +844,7 @@ def search_all(
     fusion: each file once, text hits keep their snippet. `mode` `names` searches names
     only, `text` words and meaning. Without searchable words this is a name search
     (every file the filters allow)."""
+    query, filters = with_query_filters(dbs, query, filters)
     if mode == "names":
         return search_files(
             dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
@@ -553,12 +864,14 @@ def search_all(
             dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
         )
         return SearchResults(found.hits, found.total, found.capped, semantic)
-    conditions = _conditions(policy, filters, scope)
-    if conditions is None or offset >= RANK_CAP:
+    if offset >= RANK_CAP:
         return SearchResults([], 0, capped=False, semantic=semantic)
     depth = min(offset + limit, RANK_CAP)
-    where, args = conditions
     with _connect(dbs) as conn:
+        conditions = _conditions(conn, policy, filters, scope)
+        if conditions is None:
+            return SearchResults([], 0, capped=False, semantic=semantic)
+        where, args = conditions
         rankings: list[list[Sequence[Any]]] = []
         either: list[str] = []
         either_args: list[Any] = []
