@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import io
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -15,29 +15,42 @@ def _pdf_string(text: str) -> str:
     return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def make_pdf(pages: Sequence[str]) -> bytes:
-    """A PDF with one page per string (lines become separate text lines, Helvetica)."""
+def make_pdf(pages: Sequence[str], *, images: Collection[int] = ()) -> bytes:
+    """A PDF with one page per string (lines become separate text lines, Helvetica).
+    Pages numbered in `images` (1-based) also show a small gray image, like a scan; a
+    scanned page is `""` with an image."""
     objects: list[bytes] = []
     n = len(pages)
     kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(n))
     objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
     objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {n} >>".encode())
     font_id = 3 + 2 * n
+    image_id = font_id + 1
     for i, text in enumerate(pages):
-        lines = text.split("\n")
-        ops = ["BT", "/F1 12 Tf", "14 TL", "72 720 Td"]
-        for line in lines:
-            ops.append(f"({_pdf_string(line)}) Tj T*")
-        ops.append("ET")
+        lines = text.split("\n") if text else []
+        ops = []
+        if i + 1 in images:
+            ops.append("q 400 0 0 200 100 400 cm /Im0 Do Q")
+        if lines:
+            ops += ["BT", "/F1 12 Tf", "14 TL", "72 720 Td"]
+            for line in lines:
+                ops.append(f"({_pdf_string(line)}) Tj T*")
+            ops.append("ET")
         stream = "\n".join(ops).encode("latin-1")
         objects.append(
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            f"/Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {4 + 2 * i} 0 R >>".encode()
+            f"/Resources << /Font << /F1 {font_id} 0 R >> /XObject << /Im0 {image_id} 0 R >> >> "
+            f"/Contents {4 + 2 * i} 0 R >>".encode()
         )
         objects.append(
             b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"
         )
     objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    pixels = bytes([0, 128, 255, 64] * 4)
+    objects.append(
+        b"<< /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 16 >>\nstream\n" + pixels + b"\nendstream"
+    )
     out = io.BytesIO()
     out.write(b"%PDF-1.4\n")
     offsets = []

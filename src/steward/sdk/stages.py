@@ -2,11 +2,11 @@
 # Copyright 2026 Jordan Hosler
 """Pipeline stages: units of work that compute something from a file's content.
 
-A stage declares the artifact kinds it reads (`requires`) and writes (`produces`). The
-core builds a graph from every enabled stage, runs each stage once per unique content
-(results are keyed by content hash, not path), in dependency order, and runs it again
-when its `version` rises or something it depends on is recomputed
-(docs/adr/0011-stage-framework.md).
+A stage declares the artifact kinds it reads (`requires`, plus `optional` inputs it uses
+when another stage produced them) and writes (`produces`). The core builds a graph from
+every enabled stage, runs each stage once per unique content (results are keyed by
+content hash, not path), in dependency order, and runs it again when its `version` rises
+or something it depends on is recomputed (docs/adr/0011-stage-framework.md).
 
 Stages read files only through `StageContext.open()` or `StageContext.run_isolated()`
 (read-only) and store results either in the core's content index (`write_text`,
@@ -84,6 +84,13 @@ class FolderInfo:
     locked: bool
     fields: tuple[str, ...]
     default_tags: tuple[str, ...]
+    stages_added: frozenset[str] = frozenset()
+    """Stage names the folder's type adds explicitly (full or short names, as written)."""
+
+    def adds(self, stage: str) -> bool:
+        """Whether the folder's type adds `stage` (`documents.ocr`) explicitly, by its full
+        or short name: a stage can do more there (OCR every page, not only sparse ones)."""
+        return stage in self.stages_added or stage.split(".", 1)[-1] in self.stages_added
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,8 +182,9 @@ class StageContext(Protocol):
         ...
 
     def read_text(self, artifact: str = "text") -> list[TextPart]:
-        """The text a required stage stored for this content (`artifact` must be in this
-        stage's `requires`). Empty if it found none."""
+        """The text a required or optional input stage stored for this content (`artifact`
+        must be in this stage's `requires`, `optional` or `produces`). Empty if it found
+        none, or if `artifact` is an optional input that isn't available."""
         ...
 
     def write_text(self, parts: Sequence[TextPart], *, artifact: str = "text") -> None:
@@ -185,7 +193,8 @@ class StageContext(Protocol):
         ...
 
     def read_chunks(self, artifact: str = "chunks") -> list[ChunkPart]:
-        """The chunks stored for this content as `artifact` (in `requires` or `produces`)."""
+        """The chunks stored for this content as `artifact` (in `requires`, `optional` or
+        `produces`); empty like `read_text`."""
         ...
 
     def write_chunks(
@@ -227,6 +236,10 @@ class Stage:
     index: Literal["full", "metadata"] = "full"
     """The least a folder's `index` policy must allow: `full` stages read contents;
     `metadata` stages also run in metadata-only folders."""
+    optional: tuple[str, ...] = ()
+    """Artifact kinds read when available: the stage waits while their producer still
+    has to run for the content, runs without them where it doesn't (or no enabled
+    stage produces them), and runs again when they're recomputed."""
 
     @property
     def short_name(self) -> str:

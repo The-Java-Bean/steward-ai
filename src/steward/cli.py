@@ -665,6 +665,8 @@ def stages_list() -> None:
             counts.setdefault(stage, {})[status] = n
     for name, stage in runtime.stages.stages.items():
         requires = ", ".join(stage.requires) or "-"
+        if stage.optional:  # read when available
+            requires += f" [{', '.join(stage.optional)}]"
         flags = "" if stage.default else "  (only where a folder type adds it)"
         done = counts.get(name, {})
         status = "  ".join(f"{k} {v}" for k, v in sorted(done.items())) or "no results"

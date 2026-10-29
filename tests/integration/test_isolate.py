@@ -89,3 +89,37 @@ def test_renew_is_called_while_waiting(
             *sample, h.sleep_forever, timeout_s=1, memory_mib=512, renew=lambda: calls.append(1)
         )
     assert calls
+
+
+def _gone(pid: int) -> bool:
+    """Whether `pid` has exited (a zombie waiting for its reaper counts as gone)."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return True
+        if state == "Z":
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs /proc")
+def test_programs_it_started_are_killed_on_timeout(tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    path = tmp_path / "input"
+    path.write_text(str(pid_file))
+    st = path.stat()
+    with pytest.raises(IsolationError) as caught:
+        run_isolated(
+            path, st.st_size, st.st_mtime_ns, h.wait_on_a_process, timeout_s=2, memory_mib=512
+        )
+    assert caught.value.reason == "timed_out"
+    assert _gone(int(pid_file.read_text()))
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="needs /proc")
+def test_programs_it_started_are_killed_after_it_returns(sample: tuple[Path, int, int]) -> None:
+    pid = run_isolated(*sample, h.leave_a_process_behind, timeout_s=10, memory_mib=512)
+    assert _gone(pid)

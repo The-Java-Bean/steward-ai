@@ -8,12 +8,13 @@ repair anything missed (docs/adr/0011-stage-framework.md).
 
 For each content hash, a stage is **wanted** when at least one present file with that
 content is in a folder where the stage is enabled (folder `index` policy and type
-`stages` add/remove) and `applies_to` says yes. A wanted stage is queued when every
-stage it reads from has a usable result and its own result isn't current. A result is
-**current** when it was made by the stage's current version after every input it read
-was last recomputed; it's **usable** when it's current and `done`. Failed results at the
-current version aren't re-queued (the job's retries already ran; `steward jobs retry`
-or a version bump runs them again).
+`stages` add/remove) and `applies_to` says yes. A result is **current** when it was made
+by the stage's current version after every input it read was last recomputed; it's
+**usable** when it's current and `done`. A stage is **pending** when it's wanted, not
+current, and each stage it requires is usable or pending itself. A pending stage is
+queued once every stage it requires is usable and none of its optional inputs is
+pending. Failed results at the current version aren't re-queued (the job's retries
+already ran; `steward jobs retry` or a version bump runs them again).
 """
 
 from __future__ import annotations
@@ -68,6 +69,7 @@ def folder_info(settings: EffectiveSettings) -> FolderInfo:
         locked=settings.locked,
         fields=settings.fields,
         default_tags=settings.default_tags,
+        stages_added=settings.stages_add,
     )
 
 
@@ -174,10 +176,11 @@ def run_status(graph: StageGraph, runs: Mapping[str, RunRecord]) -> tuple[set[st
             ok = run.status == "done"
         else:
             ups = graph.upstream(name)
+            optional = [up for up in graph.optional_upstream(name) if up in current]
             ok = (
                 run.stage_version == stage.version
                 and all(up in usable for up in ups)
-                and all(runs[up].updated_at <= run.updated_at for up in ups)
+                and all(runs[up].updated_at <= run.updated_at for up in (*ups, *optional))
             )
         if ok:
             current.add(name)
@@ -256,16 +259,22 @@ class Planner:
         """Stages to queue for one content hash."""
         if not rows:
             return []
-        current, usable = run_status(self.graph, runs)
-        result = []
-        for name, stage in self.graph.stages.items():
-            if name == self.graph.root or name in current:
+        graph = self.graph
+        current, usable = run_status(graph, runs)
+        pending: list[str] = []
+        for name, stage in graph.stages.items():
+            if name == graph.root or name in current:
                 continue
-            if not all(up in usable for up in self.graph.upstream(name)):
+            if not all(up in usable or up in pending for up in graph.upstream(name)):
                 continue
             if eligibility.candidates(stage, blob, rows):
-                result.append(name)
-        return result
+                pending.append(name)
+        return [
+            name
+            for name in pending
+            if all(up in usable for up in graph.upstream(name))
+            and not any(up in pending for up in graph.optional_upstream(name))
+        ]
 
     def plan_hashes(self, hashes: Iterable[str]) -> int:
         """Queue every stage job these contents need now. Returns jobs queued (or

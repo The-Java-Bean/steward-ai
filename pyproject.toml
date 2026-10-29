@@ -15,6 +15,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "pydantic>=2.11",
     "pypdf>=6",
+    "pypdfium2>=4.30",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0",
@@ -78,6 +79,10 @@ files = ["src", "tests", "examples/hello-module/src", "scripts"]
 mypy_path = "tests"
 plugins = ["pydantic.mypy"]
 exclude = ["src/steward/core/db/(versions|alembic)/", "/migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]  # no type information shipped
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

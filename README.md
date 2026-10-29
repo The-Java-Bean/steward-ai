@@ -25,10 +25,10 @@ file managers) through optional integration modules, without requiring any of th
 ### What it does *(planned)*
 - **File manager in the browser** *(implemented)*: browse, preview, upload (large files,
   resumable), download, move, rename and delete (to a trash folder, with undo).
-- **Search** *(names and full text implemented)*: keyword search over names, metadata
-  and the text of your documents (PDF, Word, OpenDocument, Markdown, HTML, plain text
-  and code); later OCR of scans and, with an AI model connected, photo captions and
-  meaning-based search.
+- **Search** *(names, full text and OCR implemented)*: keyword search over names,
+  metadata and the text of your documents (PDF, Word, OpenDocument, Markdown, HTML,
+  plain text and code), including scanned PDFs and pictures of text (OCR with
+  Tesseract); later, with an AI model connected, photo captions and meaning-based search.
 - **Tags:** automatic tagging from a vocabulary you control.
 - **Chat with your files:** ask questions and get answers that cite the file and page.
   Use the built-in chat page, or any OpenAI-compatible chat client.
@@ -99,7 +99,7 @@ errors. Annotated examples are in [`config/`](config/):
 | File | Holds |
 |---|---|
 | `steward.yaml` | data directory, timezone, log level, trusted proxies, web server address and port (`api:`), Secure cookies, where setup looks for libraries (`setup:`), session lifetimes, login lockout limits |
-| `modules.yaml` | which modules are on, and their settings (for example the `documents` limits: file size, text size, pages, parse time and memory, chunk size) |
+| `modules.yaml` | which modules are on, and their settings (for example the `documents` limits: file size, text size, pages, parse time and memory, chunk size, and OCR: on/off, languages, images, resolution, time and memory) |
 | `pipeline.yaml` | background worker threads per lane, retries, retention, schedule timing, discovery (watching, temp-file patterns, disk throttling) |
 | `libraries.yaml` | the folders steward-ai manages (imported with `steward folders import`) |
 | `folders.yaml` | custom folder types, folder mappings, locks and roles (imported the same way) |
@@ -168,14 +168,14 @@ For very large libraries, the watcher may need more inotify watches
 (`sysctl fs.inotify.max_user_watches`); without them, changes are still found by the
 6-hourly scan.
 
-### Processing pipeline *(text extraction implemented; OCR, captions and tags to come)*
+### Processing pipeline *(text extraction and OCR implemented; captions and tags to come)*
 After a file is found, its content goes through **stages** that modules provide. Each
 unique content is processed once, however many copies or moves it has, and in the
 order stages depend on each other.
 
-The built-in `documents` module extracts text from PDF (the text layer; scans without
-one need OCR, which comes next), DOCX, ODT, Markdown (frontmatter is skipped), HTML,
-plain text and code, then cuts it into passages for search. Parsing runs in a separate
+The built-in `documents` module extracts text from PDF (the text layer), DOCX, ODT,
+Markdown (frontmatter is skipped), HTML, plain text and code, then cuts it into
+passages for search. Parsing runs in a separate
 process with time and memory limits (`timeout_s`, `memory_mib` in `modules.yaml`), so
 a broken or hostile file can't stall or crash the worker. Files it can't read
 (password-protected PDFs, damaged files, files over `max_file_mib`) keep name search and
@@ -184,6 +184,29 @@ other `excluded` files are never opened at all. Folder types decide which stages
 name/metadata stages, and a type can add or remove stages
 (`stages: {add: [ocr], remove: [caption]}`). When a module updates a stage, the worker
 re-runs it, and whatever depends on it, in the background.
+
+**OCR.** PDF pages without a text layer (scans) and images (PNG, JPEG, TIFF, BMP, GIF,
+WebP) are read with [Tesseract](https://github.com/tesseract-ocr/tesseract), which the
+container image includes with English. Only pages that need it are OCR'd: a page with
+text is left alone, and so is a blank one. A folder type can ask for OCR of every page,
+for scanners that add a poor text layer of their own:
+
+```yaml
+types:
+  scans:
+    extends: documents
+    stages: { add: [ocr] }
+```
+
+Photos in `media` folders aren't OCR'd; elsewhere, set `ocr_images: false` if your
+photos aren't in a `media` folder. On the reference machine (6-core desktop CPU) a
+scanned page takes about 2.5 seconds of one core and a few hundred MB of memory (ADR
+0022). Other languages: set `ocr_languages: [eng, deu]` under `documents` in
+`modules.yaml`, and add their data to the image (for example a Dockerfile `FROM` the
+steward-ai image that runs `apt-get install tesseract-ocr-deu`, or mount a folder of
+`.traineddata` files and set `TESSDATA_PREFIX`). Without Tesseract (running from source
+without it installed), everything else works and `/ui/health` says OCR is unavailable;
+installing it later OCRs existing files in the background.
 
 ```sh
 steward stages list   # stages in order, with done/skipped/failed counts
@@ -400,9 +423,11 @@ steps, log). Read them first if present. A maintainer-only design document
 - **Phase 3 (indexing and tagging): in progress, six chunks (plan §19).** Chunk 1 done:
   the core content index (`texts`, `chunks`, FTS5) written through `StageContext`,
   isolated parsing (`run_isolated`), the `documents` module (extract + chunk), and
-  full-text search merged with name search (ADR 0021). Next: chunk 2 (OCR and
-  throughput), then model roles + `search` (embeddings), `photos`, `fields` + `tags`,
-  evals/reindex/acceptance.
+  full-text search merged with name search (ADR 0021). Chunk 2 done: optional stage
+  inputs, `documents.ocr` (Tesseract CLI + pypdfium2 rendering), process-group kills in
+  `run_isolated`, Tesseract in the image, measured throughput (ADR 0022). Next: chunk 3
+  (model roles for stages + `search`: embeddings, hybrid search), then `photos`,
+  `fields` + `tags`, evals/reindex/acceptance.
 - **Phase 2 (files, Locked Folder, shares): all 5 chunks done** (1: module web SDK +
   `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018; 3: the Locked
   Folder `/ui/locked`, ADR 0019; 4: share links, the `shares` module and the core `/s/`
@@ -490,7 +515,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy, shared=None)` (internal `BrowseScope` adds `shared`: `SharedArea(library_id, relpath, sharing, allowed)` = inside the item, `SharingRules.check(...).shareable`, snapshot relpaths),  (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `locked_folders`, `listing`, `entry`, `by_kind` (search with empty query), `search`, `unlock_preview` (policy copy with the lock removed via `dataclasses.replace`, counts from `files`/`folders`), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
 | `src/steward/api/share.py`, `src/steward/api/routes/shares.py` | Share links: `/s/{token}` and `/s/{token}/{rest:path}` (GET/POST, `@access("public")`; bad token or no provider → `not_found`; form read from the guard's cache; handler run in the threadpool; `NotFound` → the 404 page; `PUBLIC_HEADERS` no-store/no-referrer/noindex added). `ShareHandle` (the `ShareRequest`; `render` forces `principal=None`, `nav=[]`), `PublicItem` (the `SharedItem`: `Browser` in the `shared` scope, `Entry.path` made relative, no `file_id`), `_snapshot` (file ids → relpaths + their folders), `not_found` (`share_missing.html`) |
 | `src/steward/api/web.py` | The core's `Web` implementation (also `state`, `page_url` from `app.state.page_paths`, `link_to`, `absolute_url` (`api.public_url` or the request's scheme/netloc), `WebFiles.privacy` via `SharingRules`): `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`; also for `locked_folders`/`unlock_preview`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
-| `src/steward/modules/documents/` | Built-in module `documents` 0.1.0 (entry point, on by default; ADR 0021): `__init__.py` `DocumentsModule`, `DocumentsConfig` (`max_file_mib` 200, `max_text_mib` 16, `max_pages` 2000, `timeout_s` 120, `memory_mib` 1024, `chunk_chars` 1200, `chunk_overlap` 150), stages `documents.extract` (version `EXTRACT_VERSION*100 + extractors.VERSION` = 101; `run_isolated(partial(extractors.extract, …))`; `IsolationError` → `skipped` with `SKIP_REASONS`/`ISOLATION_REASONS`, text cleared) and `documents.chunk` (v1); `applies` = size limit + `extractor_for(mime, kind)`; `extractors.py` (`Limits`, `Extracted(parts, truncated)`, `NotText`, `EncryptedDocument`, `UnsafeDocument`, `decode`, `extract_plain|markdown|html|pdf|docx|odt`, `BY_MIME`, `extractor_for`, `extract` (child entry; disables logging)); `chunker.py` (`chunk_parts(parts, size=, overlap=)`, `normalize`) |
+| `src/steward/modules/documents/` | Built-in module `documents` 0.1.0 (entry point, on by default; ADR 0021): `__init__.py` `DocumentsModule`, `DocumentsConfig` (`max_file_mib` 200, `max_text_mib` 16, `max_pages` 2000, `timeout_s` 120, `memory_mib` 1024, `chunk_chars` 1200, `chunk_overlap` 150, `ocr` on, `ocr_command` `tesseract`, `ocr_languages` [eng], `ocr_images` on, `ocr_dpi` 300, `ocr_min_chars` 20, `ocr_max_pages` 500, `ocr_timeout_s` 900, `ocr_memory_mib` 1536), stages `documents.extract` (version `EXTRACT_VERSION*100 + extractors.VERSION` = 101; `run_isolated(partial(extractors.extract, …))`; `IsolationError` → `skipped` with `SKIP_REASONS`/`ISOLATION_REASONS`, text cleared) `documents.ocr` (v101, only when `tesseract` is found; ADR 0022) and `documents.chunk` (v1; `mime` + optional `text`, `text:ocr`); `applies` = size limit + `extractor_for(mime, kind)`; `extractors.py` (`Limits`, `Extracted(parts, truncated)`, `NotText`, `EncryptedDocument`, `UnsafeDocument`, `decode`, `extract_plain|markdown|html|pdf|docx|odt`, `BY_MIME`, `extractor_for`, `extract` (child entry; disables logging)); `chunker.py` (`chunk_parts(parts, size=, overlap=)`, `normalize`); `ocr.py` (Tesseract CLI, pypdfium2 rendering); health check `documents.ocr` |
 | `src/steward/modules/shares/` | Built-in module `shares` 0.1.0 (entry point, on by default; ADR 0020): `__init__.py` `SharesModule` (state migrations `migrations/state/0001_shares.py`, actions, page `shares.page` at `/ui/shares` with `badge=store.count_no_expiry`, `share_links(public.handle)`, job + `Every(15 min)` schedule `shares.expire` (lane `io`, `expire(ctx)`), exporter `store.export`); `store.py` (tables `shares_links`, `shares_snapshot`, `shares_access`; `Share` (`status(now)`, `active`, `ended`), `get`, `by_token`, `listing(past=, since=)`, `count_no_expiry`, `snapshot_ids`, `accesses`, `record` (counts all but `password_failed`), `failures`, `insert_share`, `change`/`end` (only while not ended), `expire_due`, `export` (no token/hash, `has_password`)); `credentials.py` (`new_token`, `new_share_id`, `suggest_password`, argon2 `hash_password`/`verify_password` (semaphore 2, `_hasher` patched in tests), `make_grant`/`check_grant` (HMAC keyed by the hash), `GRANT_COOKIE`, 12 h); `actions.py` (`shares.create` `CreateParams(path, expires_at, password, snapshot, share_id)`, `shares.update` `UpdateParams(share_id, expiry keep/set/never, expires_at, password_change keep/set/remove, new_password)`, `shares.revoke` `RevokeParams(share_id, reason revoked/undone)`; secrets in `Plan.transient`); `public.py` (`handle`: token → active share → password/grant → `open` → zip/raw/page; failures limit 10/address, 100/share per 15 min → 429; access log); `routes.py` (`/ui/shares` list (`status`, `q` on shown names, `age`), `GET|POST /new` (dialog; `created.html` shows link + password once), `GET /{id}`, `GET|POST /{id}/edit`, `POST /{id}/revoke`, `POST /undo`; hidden items → `name=None`); templates `list`, `new`, `created`, `detail`, `edit`, `errors`, `_row_item`, `_link`, `public/password|file|folder`; static `shares.css`, `shares.js` (copy buttons) |
 | `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.3.0 (Share links via `web.page_url("shares.page")` in the normal scope only) (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (pages `files_ui.page` at `/ui/files` and `files_ui.locked` at `/ui/locked` "Locked Folder", same `templates/` + `static/`, link builder `files_ui.links`); `routes.py` `make_router(scope)` → `router` (normal) and `locked_router` (router dependency `_gate`: `recently_authenticated()` else `require_reauth()`): `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries / the only library (normal) or `locked.html` list of `locked_folders()` (locked); `did`/`n`/`undo` → `done_notice` + Undo, rendered together by `_undo.html` as one `.notice-bar`; the key isn't `notice` so the core layout doesn't show it a second time), `GET /view`, `GET /raw` (`inline=1`), `GET /zip`, `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker `to=`, `to_scope=` honoured only in the locked router; moving out needs `confirm_out` else 409), `GET|POST /delete`, `GET|POST /lock` (normal: lock, `permanent` optional; locked: only make permanent), `POST /undo`; locked only: `GET /search?q=`, `GET|POST /unlock` (preview page, then `folder.unlock`, redirect to `/ui/files`). Templates get `base`/`scope`: `browse`, `kind`, `libraries`, `locked`, `search`, `lock`, `unlock`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo`, `_back`, `_found` |
 | `src/steward/core/executor/uploads.py` | `Uploads(dbs, executor, UploadsConfig, clock=)` (`Runtime.uploads`): `start(folder, name, size, actor=, confirmed=)` (checks; creates `UPLOAD_PREFIX + id` exclusively; `SensitiveActionError` for locked folders unless `confirmed`), `get`, `list_open(actor=)`, `write(id, offset, data, actor=)` (per-upload `threading.Lock`; offset must equal `received`; truncates a longer temp file; `pwrite` + `fsync`), `finish(id, actor=, name=)` (runs `file.upload` with `confirmed or info.confirmed`), `cancel`, `expire()`; `UploadInfo` (`path`, `temp`, `as_dict`), errors `UploadNotFound`, `UploadConflict(suggestion)`, `OffsetMismatch(offset)` (all `ActionRefused`); `FREE_SPACE_MARGIN` 64 MiB |
@@ -502,6 +527,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/acceptance/test_phase2.py` | Phase 2 acceptance (plan §19), one test per criterion, each from a fresh install finished through the setup wizard over HTTP (`Install`: builds the runtime like `steward api`, `start()`/`stop()`/`restart()` keeping the browser's cookies, `scan()` stands in for the worker, `forget_reauth()`/`reauth()`, `token_client()`, `visitor()`), parametrized over two `Layout`s (locked folder chosen in the wizard vs. locked from Files). Upload: chunks, a connection dropped mid-chunk (raw ASGI `http.disconnect`, `_put_and_drop`), server restart, resume, byte-identical. Locked: every normal page/search/zip/journal/`/api/v1` read leaks no `SECRET_NAME`/`SECRET_CONTENT` (non-recent session and API token; queries use `SECRET_QUERY` because pages echo `q`), `_assert_normal_views_work` proves those requests really list/zip; upload into the Locked Folder. Permanent: ten removal routes each after a fresh password, still locked; host CLI `folders unlock --permanent` works. Shares: no-expiry warning + re-auth + badge (dialog and `/api/v1/actions/shares.create`); revoke → Past, every `/s/` URL 404 identical to an unknown token |
 | `tests/doc_fixtures.py`, `tests/isolate_helpers.py` | Documents built in code (`make_pdf(pages)`, `make_encrypted_pdf`, `make_docx([(style, text)], doctype=)`, `make_odt([(is_heading, text)])`); functions `run_isolated` can pickle by name (sleep, spin, eat memory, `os._exit`, raise with content) |
 | `tests/unit/test_documents_extract.py`, `tests/integration/test_isolate.py`, `test_documents.py`, `test_content_index.py` | Extractors (encodings, frontmatter, fences, scripts, PDF pages/limits/encryption/owner-only password, DOCX/ODT headings, entity and member-size refusal) and chunker; isolation (timeout, CPU, memory, crash, error type only, changed file, symlink, renew); pipeline on two layouts (`Env`: every format, locked/excluded/archive/media folders, skipped reasons, edits reindexed, idempotent re-run, `/ui/search` snippets, `/api/v1/search?in=`, CLI `files text`/`search --in`); content-index writes, FTS triggers, cascade, stages can't write undeclared artifacts |
+| `tests/integration/test_ocr.py`, `tests/unit/test_ocr_helpers.py`, `tests/ocr_support.py` | OCR with a fake `tesseract` on two layouts: scanned/mixed/typed/blank-page PDFs, forced OCR (`scans` type adds `ocr`), images vs `media`, locked text, encrypted, failing tool (no output kept), health ok/off/missing program/missing languages, back-fill after the program appears, idempotent re-run; page merge, PGM stride, pixel cap, `FolderInfo.adds`; optional inputs in `tests/unit/test_stage_graph.py` (order, cycles, signature, `run_status`, pending/ready); process-group kills in `test_isolate.py` |
 | `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
 | `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `files text LIB:PATH` (all text artifacts with page/heading lines), `search QUERY [--library --folder --kind --limit --in all|names|text]` (snippets with `[match]`), `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
@@ -819,9 +845,41 @@ steps, log). Read them first if present. A maintainer-only design document
   so keep explicit entries for anything a stage keys on.
 - `LockedEnv` (`tests/locked_support.py`) now loads `documents` and drains the worker
   once, so the locked-route walk also covers text search.
-- Not yet: OCR (`text:ocr`), optional stage inputs, an `Extractor` extension point,
-  pruning text of blobs no file has, `steward reindex`, a per-file "indexing status"
-  view.
+- Not yet: an `Extractor` extension point, pruning text of blobs no file has,
+  `steward reindex`, a per-file "indexing status" view.
+
+### OCR and optional stage inputs (implemented; ADR 0022)
+- SDK: `Stage.optional` / `Registry.stage(optional=)`; `FolderInfo.stages_added` +
+  `FolderInfo.adds(name)` (full or short name). Graph: `optional_upstream(name)`
+  (only enabled producers), optional edges in order/cycles/`downstream`, signature
+  appends `optional` only when non-empty (old graphs keep their signature).
+- Planner (`planner.py`): `run_status` also requires a result to be newer than every
+  *current* optional input; `ready()` computes `pending` in graph order (wanted, not
+  current, required ups usable-or-pending) and queues pending stages whose required ups
+  are usable and no optional up is pending. The job handler only re-checks required
+  inputs (a race just re-runs the stage). `Context.optional`/`unavailable` (from the
+  handler's `usable`): reading an unavailable optional input returns `[]`.
+- `run_isolated`: child `os.setpgid(0, 0)`; `_kill_group` (`killpg` + `proc.kill`
+  fallback) at the timeout and in `finally` after every run.
+- `documents` 0.1.0 now: `ocr.py` (`Settings`, `PdfOcr(pages, text, unfinished)`,
+  `ocr_pdf`, `ocr_image`, `_tesseract` (stdin PGM/image → stdout; env only
+  `OMP_THREAD_LIMIT=1`, `LC_ALL=C`, `PATH`, `TESSDATA_PREFIX`), `installed_languages`
+  (`functools.cache`), `IMAGE_TYPES`, `MAX_PAGE_PIXELS` 40M, `OcrFailed`);
+  `__init__.py` `_run_ocr`, `merge_pages`, `_isolation_reason`, `ocr_health`. Stage
+  `documents.ocr` v101 is registered only if `shutil.which(ocr_command)` (resolved at
+  register time: tests pass an absolute path to a fake); `documents.chunk` requires
+  `mime`, optional `text`, `text:ocr`, `skipped` "no text" when empty. Health check
+  `documents.ocr`.
+- Tests: `tests/ocr_support.py` writes a fake `tesseract` (Python script; `SAY:`,
+  `SLEEP`, `FAIL` markers; logs calls to `calls.jsonl`; `--list-langs` not logged);
+  `doc_fixtures.make_pdf(pages, images={n})` adds a gray image XObject (scanned page =
+  `""` + image). Real Tesseract isn't on the dev machine or in CI: real runs happen in
+  the image (sandbox benchmark, see the handoff).
+- `steward stages list` shows optional inputs in brackets (`mime [text, text:ocr]`).
+- Dockerfile: final stage `apt-get install --no-install-recommends tesseract-ocr`, copies
+  `/usr/share/doc/<pkg>/copyright` of every added package to `/licenses/debian/`
+  (`PACKAGES` lists them); the build-stage license collector also copies dist-info
+  `licenses/` folders.
 
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
@@ -928,7 +986,7 @@ evals/   config/*.example.yaml
 ### Tech stack
 Python 3.12+ (3.13 in the image and for development), uv, FastAPI, Pydantic v2, SQLAlchemy 2 Core + Alembic, SQLite (WAL) with
 FTS5 and sqlite-vec, `openai` SDK against OpenAI-compatible endpoints, watchdog,
-BLAKE3, pypdf (+ cryptography; docling maybe later, optional), ocrmypdf + Tesseract, exiftool, argon2-cffi, Jinja2 + htmx,
+BLAKE3, pypdf (+ cryptography; docling maybe later, optional), pypdfium2 + Tesseract (OCR), exiftool, argon2-cffi, Jinja2 + htmx,
 Typer, pytest + hypothesis, ruff, mypy, import-linter.
 
 ### Roadmap
@@ -936,7 +994,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
 2. ~~File manager, Locked Folder, built-in shares~~ *(done: module web SDK + `files_ui`, resumable uploads, Locked Folder, share links, acceptance tests)*.
-3. Indexing and tagging *(in progress: content index, `documents`, full-text search done; next OCR)*: documents, search, fields, tags, photos.
+3. Indexing and tagging *(in progress: content index, `documents`, full-text search, OCR done; next embeddings)*: documents, search, fields, tags, photos.
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).
 6. Background intelligence (`tag_gen`, `dedupe`, `digest`).

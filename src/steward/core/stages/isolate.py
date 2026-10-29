@@ -6,7 +6,9 @@ Parsers are the part of the pipeline most exposed to hostile input (§21: a mali
 file exploiting a parser bug). `run_isolated` gives the parser its own process with an
 address-space limit (`RLIMIT_AS`) and a CPU-time limit, opens the file there itself
 (`O_NOFOLLOW`, then the same size/mtime check as `StageContext.open`), and kills it at
-the wall-clock timeout. The worker only ever receives the pickled result, or a reason
+the wall-clock timeout. The child leads its own process group, and the whole group is
+killed when it's done, so programs it started (`tesseract`) can't outlive it; the
+limits carry over to them. The worker only ever receives the pickled result, or a reason
 without any message text (messages could quote file content).
 
 Children come from a forkserver (a clean process started once), never from forking the
@@ -78,8 +80,7 @@ def run_isolated[T](
         message = _wait(receiver, proc, deadline, renew)
     finally:
         receiver.close()
-        if proc.is_alive():
-            proc.kill()
+        _kill_group(proc)
         proc.join(5)
     kind, value = message
     if kind == "ok":
@@ -100,7 +101,7 @@ def _wait(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            proc.kill()
+            _kill_group(proc)
             raise IsolationError("timed_out")
         if receiver.poll(min(remaining, POLL_S)):
             try:
@@ -110,6 +111,16 @@ def _wait(
                 raise _died(proc.exitcode) from None
         if renew is not None:
             renew()
+
+
+def _kill_group(proc: Any) -> None:
+    """Kill the child and everything it started (its process group has its pid)."""
+    if proc.pid is None:
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    if proc.is_alive():  # it hadn't made its own group yet
+        proc.kill()
 
 
 def _died(exitcode: int | None) -> IsolationError:
@@ -143,6 +154,7 @@ def _child(
     cpu_s: float,
 ) -> None:
     try:
+        os.setpgid(0, 0)
         _limit(memory_mib, cpu_s)
         try:
             fd = os.open(path, OPEN_FLAGS)

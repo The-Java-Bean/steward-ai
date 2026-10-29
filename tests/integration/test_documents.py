@@ -202,7 +202,7 @@ def test_unreadable_documents_are_skipped_with_a_reason(env: Env) -> None:
     assert status == "skipped"
     assert reason is not None
     assert reason.startswith("unreadable (")
-    assert "documents.chunk" not in env.runs(f"{d}/broken.pdf")
+    assert env.runs(f"{d}/broken.pdf")["documents.chunk"] == ("skipped", "no text")
 
 
 def test_an_edited_file_is_reindexed(env: Env) -> None:
@@ -299,6 +299,8 @@ def test_cli_files_text_and_search(tmp_path: Path) -> None:
 
     shown = run("files", "text", "lib:docs/report.pdf")
     assert shown.exit_code == 0, shown.output
+    listed = run("stages", "list")
+    assert "documents.chunk v1  [cpu]  mime [text, text:ocr] -> chunks" in listed.output
     assert "-- page 2" in shown.output
     assert "Revenue rose sharply" in shown.output
     found = run("search", "revenue", "--in", "text")

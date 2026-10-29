@@ -222,6 +222,7 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
         if not candidates:
             return  # no longer wanted (file gone, folder type changed…)
         chosen = candidates[0]
+        available = {k for k in stage.optional if graph.producers.get(k) in usable}
         sctx = Context(
             stage=stage.name,
             blob=blob,
@@ -233,6 +234,8 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
             renew=ctx.renew_lease,
             requires=stage.requires,
             produces=stage.produces,
+            optional=frozenset(available),
+            unavailable=frozenset(stage.optional) - available,
         )
         try:
             result = stage.run(sctx) or StageResult()

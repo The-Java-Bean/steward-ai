@@ -15,6 +15,15 @@ modules: {}
 #      memory_mib: 1024   # memory limit of the parser process
 #      chunk_chars: 1200  # search chunk size, in characters
 #      chunk_overlap: 150
+#      ocr: true          # OCR scans and images (needs the tesseract program)
+#      ocr_command: tesseract
+#      ocr_languages: [eng]   # each needs its Tesseract data (tesseract-ocr-<lang>)
+#      ocr_images: true   # also OCR images, not only PDFs
+#      ocr_dpi: 300
+#      ocr_min_chars: 20  # PDF pages with less text than this are OCR'd
+#      ocr_max_pages: 500
+#      ocr_timeout_s: 900 # time OCR of one document may take
+#      ocr_memory_mib: 1536
 #  hello:                 # the example module (development installs only)
 #    enabled: true
 #    settings:

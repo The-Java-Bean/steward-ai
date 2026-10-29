@@ -138,7 +138,7 @@ def registry() -> Registry:
         ({"lane": "executor"}, "lane must be one of"),
         ({"produces": ()}, "must produce at least one"),
         ({"produces": ("Bad Kind",)}, "bad artifact kind"),
-        ({"requires": ("text",), "produces": ("text",)}, "requires an artifact kind it produces"),
+        ({"requires": ("text",), "produces": ("text",)}, "reads an artifact kind it produces"),
         ({"index": "none"}, "index must be"),
     ],
 )
@@ -160,3 +160,130 @@ def test_registry_stores_stages_under_the_module_prefix() -> None:
     )
     with pytest.raises(ValueError, match="must start with 'mod.'"):
         r.stage("other.s", noop, version=1, produces=("o2",))
+
+
+# --- optional inputs ----------------------------------------------------------------
+
+
+def with_optional(
+    graph_stages: dict[str, Stage], name: str, optional: tuple[str, ...]
+) -> dict[str, Stage]:
+    s = graph_stages[name]
+    graph_stages[name] = Stage(s.name, s.version, s.produces, noop, s.requires, optional=optional)
+    return graph_stages
+
+
+def ocr_graph(*, ocr: bool = True) -> Any:
+    specs = [("d.extract", ("mime",), ("text",)), ("d.chunk", ("mime",), ("chunks",))]
+    if ocr:
+        specs.append(("d.ocr", ("mime",), ("text:ocr",)))
+    s = stages(*specs)
+    if ocr:
+        with_optional(s, "d.ocr", ("text",))
+    return build_graph(with_optional(s, "d.chunk", ("text", "text:ocr")))
+
+
+def test_optional_inputs_order_the_graph_and_may_have_no_producer() -> None:
+    graph = ocr_graph()
+    assert list(graph.stages) == ["core.hash", "d.extract", "d.ocr", "d.chunk"]
+    assert graph.upstream("d.chunk") == ("core.hash",)
+    assert graph.optional_upstream("d.chunk") == ("d.extract", "d.ocr")
+    assert graph.downstream["d.extract"] == ("d.ocr", "d.chunk")
+    without = ocr_graph(ocr=False)
+    assert without.optional_upstream("d.chunk") == ("d.extract",)
+    assert without.signature != graph.signature
+
+
+def test_optional_cycles_are_refused() -> None:
+    s = stages(("a.x", ("mime",), ("a",)), ("b.y", ("a",), ("b",)))
+    with pytest.raises(StageGraphError, match="cycle"):
+        build_graph(with_optional(s, "a.x", ("b",)))
+
+
+def test_signature_without_optional_inputs_is_unchanged() -> None:
+    # Graphs from before optional inputs existed keep their signature (no full pass).
+    graph = build_graph(stages(("a.x", ("mime",), ("text",))))
+    assert graph.signature == build_graph(stages(("a.x", ("mime",), ("text",)))).signature
+    s = stages(("a.x", ("mime",), ("text",)))
+    assert build_graph(with_optional(s, "a.x", ("nothing",))).signature != graph.signature
+
+
+def test_run_status_with_optional_inputs() -> None:
+    graph = ocr_graph()
+    t0 = utcnow()
+    runs = {
+        "core.hash": RunRecord(1, "done", t0),
+        "d.extract": RunRecord(1, "done", t0 + timedelta(seconds=1)),
+        "d.ocr": RunRecord(1, "skipped", t0 + timedelta(seconds=2)),
+        "d.chunk": RunRecord(1, "done", t0 + timedelta(seconds=3)),
+    }
+    assert run_status(graph, runs)[0] == set(runs)
+    # A current optional input recomputed after the chunks: they're outdated.
+    runs["d.ocr"] = RunRecord(1, "done", t0 + timedelta(seconds=4))
+    assert "d.chunk" not in run_status(graph, runs)[0]
+    # An outdated optional input doesn't count until it's recomputed.
+    runs["d.ocr"] = RunRecord(0, "done", t0 + timedelta(seconds=4))
+    assert "d.chunk" in run_status(graph, runs)[0]
+
+
+class FakeEligibility:
+    def __init__(self, wanted: set[str]) -> None:
+        self.wanted = wanted
+
+    def candidates(self, stage: Stage, blob: Any, rows: Any) -> list[object]:
+        return [object()] if stage.name in self.wanted else []
+
+
+def ready(graph: Any, wanted: set[str], runs: dict[str, RunRecord]) -> list[str]:
+    from steward.core.stages.planner import Planner
+
+    planner = Planner(None, graph)  # type: ignore[arg-type]  # ready() doesn't use the dbs
+    return planner.ready(FakeEligibility(wanted), None, [object()], runs)  # type: ignore[arg-type,list-item]
+
+
+def test_a_stage_waits_for_pending_optional_inputs() -> None:
+    graph = ocr_graph()
+    t0 = utcnow()
+    hashed = {"core.hash": RunRecord(1, "done", t0)}
+    everything = {"d.extract", "d.ocr", "d.chunk"}
+    # A PDF: extract first; OCR and chunk wait for it, then chunk waits for OCR.
+    assert ready(graph, everything, hashed) == ["d.extract"]
+    extracted = {**hashed, "d.extract": RunRecord(1, "done", t0 + timedelta(seconds=1))}
+    assert ready(graph, everything, extracted) == ["d.ocr"]
+    ocrd = {**extracted, "d.ocr": RunRecord(1, "done", t0 + timedelta(seconds=2))}
+    assert ready(graph, everything, ocrd) == ["d.chunk"]
+    # An image: no text extraction, so OCR runs at once.
+    assert ready(graph, {"d.ocr", "d.chunk"}, hashed) == ["d.ocr"]
+    # A failed extract (current, not usable) doesn't block the others.
+    failed = {**hashed, "d.extract": RunRecord(1, "failed", t0 + timedelta(seconds=1))}
+    assert ready(graph, everything, failed) == ["d.ocr"]
+    # Without the OCR stage wanted (a type removed it), chunk only waits for extract.
+    assert ready(graph, {"d.extract", "d.chunk"}, extracted) == ["d.chunk"]
+
+
+def test_an_optional_input_that_can_never_run_doesnt_block() -> None:
+    s = stages(
+        ("a.cap", ("exif",), ("caption",)),
+        ("a.exif", ("mime",), ("exif",)),
+        ("a.chunk", ("mime",), ("chunks",)),
+    )
+    graph = build_graph(with_optional(s, "a.chunk", ("caption",)))
+    t0 = utcnow()
+    runs = {
+        "core.hash": RunRecord(1, "done", t0),
+        "a.exif": RunRecord(1, "skipped", t0 + timedelta(seconds=1)),
+    }
+    # The caption stage is wanted but its required input isn't usable: not pending.
+    assert ready(graph, {"a.cap", "a.exif", "a.chunk"}, runs) == ["a.chunk"]
+
+
+def test_registry_checks_optional_inputs() -> None:
+    r = registry()
+    with pytest.raises(ValueError, match="both required and optional"):
+        r.stage("mod.a", noop, version=1, requires=("text",), optional=("text",), produces=("o",))
+    with pytest.raises(ValueError, match="reads an artifact kind it produces"):
+        r.stage("mod.b", noop, version=1, optional=("o",), produces=("o",))
+    with pytest.raises(ValueError, match="bad artifact kind"):
+        r.stage("mod.c", noop, version=1, optional=("Bad",), produces=("o",))
+    r.stage("mod.d", noop, version=1, optional=("text", "text"), produces=("o",))
+    assert r._registrations.stages()["mod.d"].optional == ("text",)

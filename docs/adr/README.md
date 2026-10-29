@@ -27,5 +27,6 @@ a later record supersedes an earlier one and both say so.
 | [0019](0019-locked-folder-view.md) | The Locked Folder view | Accepted |
 | [0020](0020-share-links.md) | Share links: a core-owned public route and the `shares` module | Accepted |
 | [0021](0021-content-index-and-documents.md) | The content index, the `documents` module and full-text search | Accepted |
+| [0022](0022-ocr-and-throughput.md) | OCR with Tesseract, optional stage inputs, and measured throughput | Accepted |
 
 New record: copy [`template.md`](template.md) to the next number, and add it to this table.

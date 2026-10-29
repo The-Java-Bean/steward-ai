@@ -4,7 +4,8 @@
 
 Built once at startup from the registrations. Fails closed (stops startup) if two
 stages produce the same artifact kind, a stage requires a kind nobody produces, or the
-requirements form a cycle.
+inputs (required and optional) form a cycle. An optional input nobody produces is
+simply never there.
 """
 
 from __future__ import annotations
@@ -36,15 +37,23 @@ class StageGraph:
         return HASH_STAGE
 
     def upstream(self, name: str) -> tuple[str, ...]:
-        """The stages whose output `name` reads directly."""
+        """The stages whose output `name` requires directly."""
         return tuple(dict.fromkeys(self.producers[k] for k in self.stages[name].requires))
+
+    def optional_upstream(self, name: str) -> tuple[str, ...]:
+        """The enabled stages whose output `name` reads when it's available."""
+        return tuple(
+            dict.fromkeys(
+                self.producers[k] for k in self.stages[name].optional if k in self.producers
+            )
+        )
 
     @cached_property
     def downstream(self) -> Mapping[str, tuple[str, ...]]:
         """Stage -> every stage that depends on it, directly or not, in graph order."""
         result: dict[str, set[str]] = {name: set() for name in self.stages}
         for name in reversed(list(self.stages)):
-            for up in self.upstream(name):
+            for up in (*self.upstream(name), *self.optional_upstream(name)):
                 result[up] |= {name} | result[name]
         order = list(self.stages)
         return {name: tuple(sorted(deps, key=order.index)) for name, deps in result.items()}
@@ -59,6 +68,7 @@ class StageGraph:
         changed signature at startup triggers a full planning pass."""
         shape = [
             [s.name, s.version, s.requires, s.produces, s.lane, s.default, s.index]
+            + ([s.optional] if s.optional else [])
             for s in self.stages.values()
         ]
         return hashlib.sha256(json.dumps(shape).encode()).hexdigest()
@@ -84,12 +94,15 @@ def build_graph(stages: Mapping[str, Stage]) -> StageGraph:
             )
 
     # Kahn's algorithm; alphabetical among stages that are ready at the same time.
-    needs = {s.name: {producers[k] for k in s.requires} - {s.name} for s in stages.values()}
+    needs = {
+        s.name: {producers[k] for k in (*s.requires, *s.optional) if k in producers} - {s.name}
+        for s in stages.values()
+    }
     order: list[str] = []
     while needs:
         ready = sorted(name for name, deps in needs.items() if not deps)
         if not ready:
-            raise StageGraphError("stage requirements form a cycle: " + ", ".join(sorted(needs)))
+            raise StageGraphError("stage inputs form a cycle: " + ", ".join(sorted(needs)))
         for name in ready:
             order.append(name)
             del needs[name]

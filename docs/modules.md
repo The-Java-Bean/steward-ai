@@ -83,7 +83,7 @@ Every name a module registers is the module's name or starts with `<module>.`
 | `job(name, handler, lane=...)` | a background job type; `handler(ctx: JobContext)` runs in a worker thread |
 | `subscribe(event_type, handler, name=...)` | a reaction to events such as `file.discovered`; `handler(event: Event)` (core file events: `file.discovered`, `file.changed`, `file.moved`, `file.reappeared`, `file.missing`; payloads hold `file_id`, `library_id`, `relpath` and, once hashed, `content_hash`, `size`, `mime`) |
 | `schedule(name, Every(...) \| Daily(...), job=..., payload=...)` | a recurring job; owners can re-time or turn it off in `pipeline.yaml` |
-| `stage(name, run, version=, produces=, requires=, lane=, applies_to=, default=, index=)` | a pipeline stage; see "Stages" below |
+| `stage(name, run, version=, produces=, requires=, optional=, lane=, applies_to=, default=, index=)` | a pipeline stage; see "Stages" below |
 | `migrations(path, database="state" \| "index")` | a directory of Alembic revisions creating `<module>_*` tables |
 | `ui_page(name, router, path=, title=, nav=True, templates=, static=, badge=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; `badge(state) -> int` puts a count next to its navigation entry; see "UI pages" below |
 | `share_links(handler)` | answer the public share links `/s/<token>…` (one module at most); see "Share links" below |
@@ -188,6 +188,14 @@ def register(r: Registry) -> None:
   isn't planned again until `steward jobs retry` or a version bump.
 - Startup stops if two stages produce the same kind, a required kind has no producer
   (declare the module that provides it in `requires`), or stages form a cycle.
+- **Optional inputs** (`optional=("text:ocr",)`) are read when they exist: the stage
+  waits while their producer still has to run for that content, runs without them
+  where it doesn't (not enabled, doesn't apply, its own inputs failed, or no enabled
+  stage produces the kind at all), and runs again when they're recomputed. Reading an
+  optional input that isn't available gives an empty result. `documents.chunk` uses
+  this to prefer OCR text: `requires=("mime",), optional=("text", "text:ocr")`.
+- `ctx.folder.adds("documents.ocr")` says whether the folder's type adds a stage
+  explicitly, for stages that do more there (OCR every page, not only sparse ones).
 
 ### The content index
 
@@ -207,8 +215,8 @@ def chunk(ctx: StageContext) -> None:  # requires=("text",), produces=("chunks",
     ctx.write_chunks([ChunkPart(p.body, page=p.page) for p in parts], source="text")
 ```
 
-- You may write only artifact kinds your stage `produces` and read kinds it `requires`
-  (or produces); anything else raises `ValueError`.
+- You may write only artifact kinds your stage `produces` and read kinds it
+  `requires`, lists as `optional` or produces; anything else raises `ValueError`.
 - Each write replaces what was stored for that content and kind. Empty bodies are
   dropped from chunks; NUL and the snippet marker characters are removed.
 
@@ -221,6 +229,9 @@ back. `fn` must be importable by name (a module-level function or a
 `functools.partial` of one). It raises `FileChanged`, or `IsolationError` with
 `reason` `timed_out`, `too_big`, `crashed` or `error` (then `error_type` is the
 exception's class name; messages are never passed on, since they can quote content).
+The child leads its own process group and the whole group is killed afterwards, so
+programs `fn` starts (`subprocess.run(["tesseract", …])`) inherit the limits and can't
+outlive it.
 
 ## Actions
 

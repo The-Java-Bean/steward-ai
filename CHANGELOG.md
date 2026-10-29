@@ -7,14 +7,33 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `documents.chunk` reads the OCR text when there is some, else the extracted text, and
+  records `skipped` ("no text") when there's nothing to chunk.
+- The container image includes Tesseract 5 (English); license files of the Debian
+  packages it adds are in `/licenses/debian/`, and license files kept in `licenses/`
+  folders of Python packages are now collected too.
+- `steward stages list` shows optional inputs in brackets.
 - `/api/v1/search` searches names and text by default (`in=all`); `in=names` gives the
   old behaviour. Hits have `snippet` and `page`.
 
 ### Fixed
+- `run_isolated` kills the child's whole process group, so programs it started can't
+  outlive a timeout.
 - MIME types no longer depend on the host's `/etc/mime.types`: DOCX, XLSX, PPTX, ODT
   and other office files were typed as zip archives in the container image.
 
 ### Added
+- OCR (ADR 0022): stage `documents.ocr` reads scanned PDF pages (pages without enough
+  text that hold an image; every page where a folder type adds `ocr`) and images (PNG,
+  JPEG, TIFF, BMP, GIF, WebP) with Tesseract, so they're found by full-text search.
+  Settings `ocr`, `ocr_command`, `ocr_languages`, `ocr_images`, `ocr_dpi`,
+  `ocr_min_chars`, `ocr_max_pages`, `ocr_timeout_s`, `ocr_memory_mib`. Without the
+  `tesseract` program the stage isn't registered and the health check `documents.ocr`
+  warns; installing it later back-fills. Measured throughput and memory in the ADR.
+- SDK: optional stage inputs (`Registry.stage(optional=...)`): read when another stage
+  produced them, waited for while it still has to run, ignored where it doesn't;
+  `FolderInfo.stages_added` and `FolderInfo.adds(name)`.
+- Dependency: `pypdfium2` (renders PDF pages for OCR).
 - Text from documents and full-text search (ADR 0021). New built-in module `documents`
   (on by default): stage `documents.extract` reads plain text and code, Markdown, HTML,
   PDF, DOCX and ODT (encrypted, unreadable, unsafe, too slow or too big files are

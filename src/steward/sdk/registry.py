@@ -220,11 +220,12 @@ class Registry:
         applies_to: AppliesTo = _always,
         default: bool = True,
         index: Literal["full", "metadata"] = "full",
+        optional: tuple[str, ...] = (),
     ) -> None:
         """Register a pipeline stage (`<module>.<name>`); see `steward.sdk.stages`.
 
-        `requires` and `produces` are artifact kinds (`text`, `text:ocr`…). Core's
-        `core.hash` stage produces `hash` and `mime`. Raise `version` whenever the
+        `requires`, `optional` and `produces` are artifact kinds (`text`, `text:ocr`…).
+        Core's `core.hash` stage produces `hash` and `mime`. Raise `version` whenever the
         output would change, so existing results are recomputed.
         """
         if version < 1:
@@ -233,11 +234,13 @@ class Registry:
             raise ValueError(f"stage {name!r}: lane must be one of {', '.join(WORKER_LANES)}")
         if not produces:
             raise ValueError(f"stage {name!r} must produce at least one artifact kind")
-        for kind in (*requires, *produces):
+        for kind in (*requires, *optional, *produces):
             if not ARTIFACT_KIND_PATTERN.match(kind):
                 raise ValueError(f"stage {name!r}: bad artifact kind {kind!r}")
-        if set(requires) & set(produces):
-            raise ValueError(f"stage {name!r} requires an artifact kind it produces")
+        if set(requires) & set(produces) or set(optional) & set(produces):
+            raise ValueError(f"stage {name!r} reads an artifact kind it produces")
+        if set(requires) & set(optional):
+            raise ValueError(f"stage {name!r}: an artifact kind is both required and optional")
         if index not in ("full", "metadata"):
             raise ValueError(f"stage {name!r}: index must be 'full' or 'metadata'")
         item = Stage(
@@ -250,6 +253,7 @@ class Registry:
             applies_to=applies_to,
             default=default,
             index=index,
+            optional=tuple(dict.fromkeys(optional)),
         )
         self._add("stage", name, item)
 

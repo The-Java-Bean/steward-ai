@@ -35,6 +35,10 @@ class Context:
     renew: Callable[[], None] = field(repr=False)
     requires: tuple[str, ...] = ()
     produces: tuple[str, ...] = ()
+    optional: frozenset[str] = frozenset()
+    """The stage's optional inputs that are available (their producer's result is usable)."""
+    unavailable: frozenset[str] = frozenset()
+    """Its other optional inputs: readable, but always empty."""
 
     @property
     def path(self) -> Path:
@@ -100,14 +104,20 @@ class Context:
 
     # --- content index ----------------------------------------------------------------
 
-    def _allowed(self, artifact: str, *, write: bool) -> None:
-        allowed = self.produces if write else (*self.requires, *self.produces)
+    def _allowed(self, artifact: str, *, write: bool) -> bool:
+        """Whether `artifact` can be read (False: an unavailable optional input)."""
+        if write:
+            allowed: tuple[str, ...] | frozenset[str] = self.produces
+        else:
+            allowed = (*self.requires, *self.optional, *self.unavailable, *self.produces)
         if artifact not in allowed:
-            verb = "produce" if write else "require"
+            verb = "produce" if write else "read"
             raise ValueError(f"stage {self.stage} doesn't {verb} artifact {artifact!r}")
+        return artifact not in self.unavailable
 
     def read_text(self, artifact: str = "text") -> list[TextPart]:
-        self._allowed(artifact, write=False)
+        if not self._allowed(artifact, write=False):
+            return []
         with self.dbs.index.read() as conn:
             return content.read_text(conn, self.blob.content_hash, artifact)
 
@@ -117,7 +127,8 @@ class Context:
             content.write_text(conn, self.blob.content_hash, artifact, parts)
 
     def read_chunks(self, artifact: str = "chunks") -> list[ChunkPart]:
-        self._allowed(artifact, write=False)
+        if not self._allowed(artifact, write=False):
+            return []
         with self.dbs.index.read() as conn:
             return content.read_chunks(conn, self.blob.content_hash, artifact)
 

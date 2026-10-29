@@ -37,3 +37,20 @@ def leak_content(f: BinaryIO) -> None:
 
 def pid(f: BinaryIO) -> int:
     return os.getpid()
+
+
+def leave_a_process_behind(f: BinaryIO) -> int:
+    """Start a long-running program (like `tesseract`) and return its pid at once."""
+    import subprocess
+
+    return subprocess.Popen(["sleep", "60"]).pid  # noqa: S607
+
+
+def wait_on_a_process(f: BinaryIO) -> None:
+    """Start a long-running program, record its pid in the file named by the input, hang."""
+    import subprocess
+
+    proc = subprocess.Popen(["sleep", "60"])  # noqa: S607
+    with open(f.read().decode(), "w") as out:
+        out.write(str(proc.pid))
+    proc.wait()
