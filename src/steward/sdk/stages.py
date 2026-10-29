@@ -10,15 +10,16 @@ or something it depends on is recomputed (docs/adr/0011-stage-framework.md).
 
 Stages read files only through `StageContext.open()` or `StageContext.run_isolated()`
 (read-only) and store results either in the core's content index (`write_text`,
-`write_chunks`: searchable, privacy-filtered by the core) or in their module's own
-`index.db` tables (`<module>_*`) through `StageContext.index_write()`. A stage can run
+`write_chunks`, `write_properties`: searchable, privacy-filtered by the core) or in
+their module's own `index.db` tables (`<module>_*`) through `StageContext.index_write()`.
+A stage can run
 more than once for the same content, so writes must be idempotent (upserts keyed by
 content hash; the content-index writes replace what the stage wrote before).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import BinaryIO, Literal, Protocol
@@ -114,6 +115,10 @@ class ChunkPart:
     heading: str | None = None
 
 
+type PropertyValue = str | int | float | bool
+"""A property's value (`StageContext.write_properties`)."""
+
+
 IsolationReason = Literal["timed_out", "too_big", "crashed", "error"]
 
 
@@ -204,6 +209,21 @@ class StageContext(Protocol):
         """Store this content's chunks as `artifact` (one of this stage's `produces`),
         replacing what was stored before; `source` names the text artifact they came
         from. Chunks are full-text searchable at once."""
+        ...
+
+    def read_properties(self, artifact: str) -> dict[str, PropertyValue]:
+        """The properties stored for this content as `artifact` (in `requires`,
+        `optional` or `produces`); empty like `read_text`."""
+        ...
+
+    def write_properties(
+        self, values: Mapping[str, PropertyValue | None], *, artifact: str
+    ) -> None:
+        """Store structured metadata for this content as `artifact` (one of this stage's
+        `produces`; `exif`, `fields`…), replacing what was stored before. Names are
+        snake_case (at most 64 characters, 200 per artifact); None values and empty
+        strings are left out; a string longer than 2000 characters raises `ValueError`.
+        The file manager shows them."""
         ...
 
     def model(self, role: str) -> StageModel:

@@ -7,6 +7,9 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `documents.chunk` also chunks an image's description (`text:caption`) after its own
+  text, and applies to every image; the `media` folder type no longer removes `chunk`
+  (it still removes `extract` and `ocr`).
 - `search_all`, `/ui/search`, `/api/v1/search`, the Locked Folder search and `steward
   search` also find files by meaning when an embedding model is set up: `in=text` is
   words + meaning, `in=all` adds names. Results found only by meaning are marked
@@ -32,6 +35,21 @@ All notable changes to steward-ai are recorded here. The format follows
   and other office files were typed as zip archives in the container image.
 
 ### Added
+- Photos (ADR 0024). New built-in module `photos` (on by default): stage `photos.exif`
+  reads the date taken, camera, lens, size, orientation, GPS position and duration of
+  photos and videos with the exiftool program (registered only when it's installed;
+  health check `photos.exif`); stage `photos.caption` describes JPEG, PNG, WebP, GIF,
+  TIFF and BMP images with the model mapped to the new `caption` role (a vision model),
+  so photos are found by words and by meaning. Settings `exif*`, `captions`,
+  `caption_*`. The container image includes exiftool.
+- Properties in the content index (index revision `0006`): `StageContext.
+  write_properties` / `read_properties`, `PropertyValue`; `Files.details` and
+  `FileDetails` in the web SDK. The file manager's file page shows a "Details" box
+  (description, date taken, size, location, camera…). `steward files info LIB:PATH`
+  prints a file's stage results and properties.
+- `reasoning` for chat roles in `llm.yaml` (`default`, `none`, `low`, `medium`, `high`;
+  sent as `reasoning_effort`).
+- New dependency Pillow (MIT-CMU, added to the license allow-list).
 - Searching by meaning (ADR 0023). New built-in module `search` (on by default):
   declares the model role `embed` and stage `search.embed`, which embeds every chunk
   (settings `batch_size`, `max_chunks`). Without a model mapped to `embed` the stage

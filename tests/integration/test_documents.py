@@ -300,7 +300,9 @@ def test_cli_files_text_and_search(tmp_path: Path) -> None:
     shown = run("files", "text", "lib:docs/report.pdf")
     assert shown.exit_code == 0, shown.output
     listed = run("stages", "list")
-    assert "documents.chunk v1  [cpu]  mime [text, text:ocr] -> chunks" in listed.output
+    assert (
+        "documents.chunk v1  [cpu]  mime [text, text:ocr, text:caption] -> chunks" in listed.output
+    )
     assert "-- page 2" in shown.output
     assert "Revenue rose sharply" in shown.output
     found = run("search", "revenue", "--in", "text")

@@ -125,7 +125,7 @@ BUILTIN_TYPES: dict[str, TypeSettings] = {
     ),
     "media": TypeSettings(
         description="Photos and videos.",
-        stages=StageChanges(add=("exif", "caption"), remove=("extract", "ocr", "chunk")),
+        stages=StageChanges(add=("exif", "caption"), remove=("extract", "ocr")),
     ),
     "notes": TypeSettings(
         description="Notes, mostly Markdown with frontmatter.",

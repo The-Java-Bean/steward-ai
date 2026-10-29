@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from sqlalchemy import select
 
+from steward.core import content
 from steward.core.db import Databases
 from steward.core.db.schema import blobs, files, folders
 from steward.core.discovery.hashing import HEAD, detect_mime, kind_of
@@ -42,6 +43,7 @@ from steward.sdk import ActionRefused
 from steward.sdk.web import (
     Crumb,
     Entry,
+    FileDetails,
     FilePage,
     FolderListing,
     LibraryInfo,
@@ -130,6 +132,10 @@ class ZipMember:
     arcname: str
     modified: datetime
     location: Located | None = None
+
+
+CAPTION_ARTIFACT = "text:caption"
+"""The text artifact shown as a file's description (written by `photos.caption`)."""
 
 
 class Browser:
@@ -257,6 +263,26 @@ class Browser:
             self._known(where.library_id, [where.relpath]),
             scope,
         )
+
+    def details(self, path: str, *, scope: BrowseScope) -> FileDetails:
+        where = self.locate(path, scope)
+        if where.relpath == "" or not stat.S_ISREG(self._stat(where).st_mode):
+            raise NotFound(where.path)
+        with self.dbs.state.read() as conn:
+            content_hash = conn.execute(
+                select(files.c.content_hash).where(
+                    files.c.library_id == where.library_id,
+                    files.c.relpath == where.relpath,
+                    files.c.present.is_(True),
+                )
+            ).scalar_one_or_none()
+        if content_hash is None:
+            return FileDetails()
+        with self.dbs.index.read() as conn:
+            caption = content.read_text(conn, content_hash, CAPTION_ARTIFACT)
+            props = content.properties_of(conn, content_hash)
+        description = " ".join(p.body for p in caption).strip() or None
+        return FileDetails(description=description, properties=props)
 
     def by_kind(
         self, kind: str, *, library: str | None, scope: Scope, limit: int, offset: int

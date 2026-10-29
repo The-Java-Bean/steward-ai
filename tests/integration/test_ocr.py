@@ -209,7 +209,11 @@ def test_images_are_ocrd_except_in_media_folders(env: Env) -> None:
     assert env.runs(f"{d}/receipt.png")["documents.chunk"] == ("done", None)
     assert "documents.extract" not in env.runs(f"{d}/receipt.png")
     assert env.find("espresso") == [f"{d}/receipt.png"]
-    assert env.runs(f"{env.spec['media']}/photo.png") == {"core.hash": ("done", None)}
+    # Media folders don't OCR; `chunk` still runs there for image descriptions.
+    assert env.runs(f"{env.spec['media']}/photo.png") == {
+        "core.hash": ("done", None),
+        "documents.chunk": ("skipped", "no text"),
+    }
     assert env.find("beachword") == []
 
 
@@ -260,7 +264,10 @@ def test_without_tesseract_ocr_is_unavailable_and_backfills_later(tmp_path: Path
         # Everything else still works; scans just have no text.
         assert e.runs("Documents/scan.pdf")["documents.chunk"] == ("skipped", "no text")
         assert e.find("harbour") == ["Documents/typed.pdf"]
-        assert e.runs("Documents/receipt.png") == {"core.hash": ("done", None)}
+        assert e.runs("Documents/receipt.png") == {
+            "core.hash": ("done", None),
+            "documents.chunk": ("skipped", "no text"),
+        }
 
         e.rebuild(ocr_command=str(e.fake))  # the program was installed
         assert full_pass_needed(e.runtime.dbs, e.runtime.stages)

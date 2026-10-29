@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -365,6 +366,31 @@ embeddings = Table(
 )
 """One L2-normalized float32 vector per chunk and space (searched with sqlite-vec's
 distance functions)."""
+
+# --- properties (index revision 0006) ----------------------------------------------
+
+PROPERTY_TYPES = ("text", "int", "float", "bool")
+
+properties = Table(
+    "properties",
+    index_metadata,
+    Column(
+        "content_hash",
+        Text,
+        ForeignKey("blobs.content_hash", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("artifact", Text, primary_key=True),  # `exif`, `fields`…
+    Column("key", Text, primary_key=True),
+    Column("type", Text, nullable=False),
+    Column("text", Text),
+    Column("num", Float),
+    Column("created_at", UTCDateTime, nullable=False),
+    CheckConstraint("type IN ('text', 'int', 'float', 'bool')", name="ck_properties_type"),
+)
+"""Structured metadata per content (EXIF, extracted fields), written by stages through
+`StageContext.write_properties`. Strings are in `text`, numbers and booleans in `num`,
+so SQL can compare either."""
 
 # --- auth and runtime settings (state revision 0004) -------------------------------
 

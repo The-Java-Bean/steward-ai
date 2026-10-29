@@ -310,3 +310,32 @@ def test_the_probe_image_is_a_valid_red_png() -> None:
     length = struct.unpack(">I", data[start - 8 : start - 4])[0]
     raw = zlib.decompress(data[start : start + length])
     assert raw[:4] == b"\x00\xff\x00\x00"
+
+
+class RecordingTransport:
+    def __init__(self) -> None:
+        self.sent: list[ModelRequest] = []
+
+    def send(self, endpoint: EndpointConfig, model: str, request: ModelRequest) -> ModelResponse:
+        self.sent.append(request)
+        return ModelResponse({"choices": [{"message": {"content": "hi"}}]})
+
+
+def test_the_reasoning_setting_is_sent_as_reasoning_effort(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    transport = RecordingTransport()
+    gateway = Gateway(
+        llm(chat={"model": "c", "reasoning": "none"}, plain={"model": "p"}),
+        runtime.dbs.state,
+        PrivacyRules.default(),
+        transport,
+    )
+    hi = [{"role": "user", "content": "hi"}]
+    gateway.call("chat", ChatRequest(hi), provenance=[], purpose="index")
+    gateway.call(
+        "chat", ChatRequest(hi, {"reasoning_effort": "high"}), provenance=[], purpose="index"
+    )
+    gateway.call("plain", ChatRequest(hi), provenance=[], purpose="index")
+    options = [r.options for r in transport.sent if isinstance(r, ChatRequest)]
+    assert options == [{"reasoning_effort": "none"}, {"reasoning_effort": "high"}, {}]
+    runtime.close()

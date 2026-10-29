@@ -24,6 +24,7 @@ Logs carry roles, endpoint names, counts and levels, never content.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import threading
@@ -36,6 +37,7 @@ from steward.core.config import EndpointConfig, LlmConfig, RoleConfig
 from steward.core.db import Database
 from steward.core.folders.types import SENSITIVITY_ORDER, Sensitivity, max_sensitivity
 from steward.core.llm.transport import (
+    ChatRequest,
     ModelRequest,
     ModelResponse,
     ModelTransport,
@@ -187,6 +189,7 @@ class Gateway:
                 retry_after_s=wait,
             )
         log.info("model call", extra={"fields": fields})
+        request = with_reasoning(request, self.role_config(route.role))
         try:
             with self._slots[name]:
                 response = self.transport.send(route.endpoint, route.model, request)
@@ -244,3 +247,17 @@ def check_llm_config(config: LlmConfig) -> None:
             f"llm.yaml: endpoint(s) {', '.join(remote)} have trust: remote; remote endpoints "
             "need the remote_llm module, which isn't available yet"
         )
+
+
+def with_reasoning(request: ModelRequest, role_cfg: RoleConfig) -> ModelRequest:
+    """A chat request with the role's `reasoning` setting as `reasoning_effort` (unless
+    it's `default`, or the caller set it already)."""
+    if (
+        not isinstance(request, ChatRequest)
+        or role_cfg.reasoning == "default"
+        or "reasoning_effort" in request.options
+    ):
+        return request
+    return dataclasses.replace(
+        request, options={**request.options, "reasoning_effort": role_cfg.reasoning}
+    )

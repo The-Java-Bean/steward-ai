@@ -71,11 +71,12 @@ LABEL org.opencontainers.image.title="steward-ai" \
       org.opencontainers.image.licenses="Apache-2.0"
 # OCR (the `documents` module): Tesseract with English and script-detection data. More
 # languages: install `tesseract-ocr-<lang>` in an image built from this one, or mount
-# trained data and set TESSDATA_PREFIX. The copyright files of every Debian package added
-# here go to /licenses/debian/.
+# trained data and set TESSDATA_PREFIX. Photo and video metadata (the `photos` module):
+# exiftool. The copyright files of every Debian package added here go to
+# /licenses/debian/.
 RUN dpkg-query -W -f '${Package}\n' | sort > /tmp/before \
  && apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr \
+ && apt-get install -y --no-install-recommends tesseract-ocr libimage-exiftool-perl \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /licenses/debian \
  && dpkg-query -W -f '${Package}\n' | sort | comm -13 /tmp/before - > /licenses/debian/PACKAGES \

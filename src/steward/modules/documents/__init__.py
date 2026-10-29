@@ -13,11 +13,12 @@ Stages:
   Registered only when the `tesseract` program is found; the health check
   `documents.ocr` says when it isn't (docs/adr/0022-ocr-and-throughput.md).
 - `documents.chunk` (`mime` → `chunks`, reading `text:ocr` if it holds text, else
-  `text`): heading- and page-aware chunks, full-text searchable through the core as soon
-  as they're written.
+  `text`, plus an image's `text:caption` when a module such as `photos` wrote one):
+  heading- and page-aware chunks, full-text searchable through the core as soon as
+  they're written.
 
 Built only on `steward.sdk`; folder types decide where it runs (`index: full`; the
-`media` type removes these stages).
+`media` type removes `extract` and `ocr`).
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ EXTRACT_VERSION = 1
 OCR_VERSION = 1
 CHUNK_VERSION = 1
 OCR_STAGE = "documents.ocr"
+CAPTION = "text:caption"
+"""A description of an image, written by another module (`photos.caption`): chunked
+after the document's own text, so it's found by words and meaning."""
 
 SKIP_REASONS = {
     "NotText": "not text",
@@ -265,6 +269,13 @@ class DocumentsModule:
             chunks = chunker.chunk_parts(
                 parts, size=config.chunk_chars, overlap=config.chunk_overlap
             )
+            caption = ctx.read_text(CAPTION)
+            if caption:
+                if not chunks:
+                    source = CAPTION
+                chunks += chunker.chunk_parts(
+                    caption, size=config.chunk_chars, overlap=config.chunk_overlap
+                )
             ctx.write_chunks(chunks, source=source)
             return StageResult() if chunks else StageResult(status="skipped", reason="no text")
 
@@ -290,16 +301,15 @@ class DocumentsModule:
             )
 
         def chunk_applies(blob: BlobInfo, file: FileInfo, folder: FolderInfo) -> bool:
-            return applies(blob, file, folder) or (
-                command is not None and ocr_applies(blob, file, folder)
-            )
+            # Images: their OCR text, or a description another module (`photos`) wrote.
+            return applies(blob, file, folder) or blob.kind == "image"
 
         r.stage(
             "documents.chunk",
             chunk,
             version=CHUNK_VERSION,
             requires=("mime",),
-            optional=("text", "text:ocr"),
+            optional=("text", "text:ocr", CAPTION),
             produces=("chunks",),
             lane="cpu",
             applies_to=chunk_applies,

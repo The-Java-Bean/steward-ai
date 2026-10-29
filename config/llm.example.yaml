@@ -31,5 +31,16 @@ roles:
     # Files whose closest passage is less similar to the query than this (cosine,
     # -1..1) aren't shown as matches by meaning. Depends on the model.
     min_similarity: 0.40
+  caption:
+    # Used by the `photos` module to describe photos so they can be searched. Needs a
+    # vision model (one that accepts images). Changing the model describes every photo
+    # again (in the background); expect a few seconds per photo on a GPU.
+    endpoint: local
+    model: <vision-model>
+    capabilities: [vision]
+    # Reasoning ("thinking") models: `none` describes photos several times faster and
+    # keeps the reasoning from using up the answer. Any chat role can set it
+    # (default | none | low | medium | high; sent as `reasoning_effort`).
+    reasoning: none
   # Run `steward models list` to see which roles the enabled modules use, and
   # `steward models probe` to test the mapped models.

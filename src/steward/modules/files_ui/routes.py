@@ -16,6 +16,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Depends, Form, Query
 from fastapi.responses import Response
 
+from steward.modules.files_ui.details import detail_rows
 from steward.sdk import ActionFailed, ActionRefused, Entry, NotFound, Scope, WebDep
 
 PAGE = "/ui/files"
@@ -163,6 +164,7 @@ def make_router(scope: Scope) -> APIRouter:
         cut = False
         if _shows_as_text(entry):
             text, cut = web.files.read_text(path, scope=scope, max_bytes=TEXT_PREVIEW_BYTES)
+        details = web.files.details(path, scope=scope)
         return web.render(
             "view.html",
             common(
@@ -172,6 +174,8 @@ def make_router(scope: Scope) -> APIRouter:
                 preview=_preview_kind(entry),
                 text=text,
                 cut=cut,
+                description=details.description,
+                details=detail_rows(details),
             ),
         )
 

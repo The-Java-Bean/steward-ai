@@ -29,6 +29,7 @@ from steward.sdk import (
     FileInfo,
     FolderInfo,
     Message,
+    PropertyValue,
     StageModel,
     TextPart,
 )
@@ -158,6 +159,19 @@ class Context:
         self._allowed(artifact, write=True)
         with self.dbs.index.write() as conn:
             content.write_chunks(conn, self.blob.content_hash, artifact, source, chunks)
+
+    def read_properties(self, artifact: str) -> dict[str, PropertyValue]:
+        if not self._allowed(artifact, write=False):
+            return {}
+        with self.dbs.index.read() as conn:
+            return content.read_properties(conn, self.blob.content_hash, artifact)
+
+    def write_properties(
+        self, values: Mapping[str, PropertyValue | None], *, artifact: str
+    ) -> None:
+        self._allowed(artifact, write=True)
+        with self.dbs.index.write() as conn:
+            content.write_properties(conn, self.blob.content_hash, artifact, values)
 
     # --- models ---------------------------------------------------------------------
 

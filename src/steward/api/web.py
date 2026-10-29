@@ -34,6 +34,7 @@ from steward.sdk.web import (
     ActionPreview,
     Entry,
     EntryKind,
+    FileDetails,
     FilePage,
     FolderListing,
     LibraryInfo,
@@ -237,6 +238,10 @@ class WebFiles:
                 continue
             found[path] = sharing.check(library_id, relpath)
         return found
+
+    def details(self, path: str, *, scope: Scope = "normal") -> FileDetails:
+        self.web.check_scope(scope)
+        return self.web.browser().details(path, scope=scope)
 
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:
         self.web.check_scope(scope)

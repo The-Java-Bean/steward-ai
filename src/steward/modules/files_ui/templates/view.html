@@ -30,4 +30,16 @@
   <p class="hint">No preview for this kind of file.</p>
 {% endif %}
 </div>
+{% if description or details %}
+<section class="details" aria-labelledby="details-heading">
+  <h2 id="details-heading">Details</h2>
+  {% if description %}<p class="description">{{ description }}</p>{% endif %}
+  {% if details %}
+  <dl>
+    {% for label, value in details %}<dt>{{ label }}</dt><dd>{{ value }}</dd>
+    {% endfor %}
+  </dl>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

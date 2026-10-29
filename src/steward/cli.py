@@ -30,6 +30,7 @@ from steward.core.config import (
     load_folders_file,
 )
 from steward.core.db import migrate, utcnow
+from steward.core.db.schema import blobs as blobs_table
 from steward.core.db.schema import files as files_table
 from steward.core.db.schema import stage_runs
 from steward.core.discovery import RECONCILE_JOB, ScanError, Scanner, Watcher, enqueue_scan
@@ -615,6 +616,53 @@ def files_list(
         )
         typer.echo(f"{r.library_id}:{r.relpath}  {r.size} B  {digest}{state}")
     typer.echo(f"({len(rows)} shown, {total} known)")
+
+
+@files_app.command("info")
+def files_info(
+    path: Annotated[str, typer.Argument(help="library:path of a file")],
+) -> None:
+    """Show what steward-ai knows about a file: its content hash and type, each stage's
+    result, and the properties stages stored (date taken, camera…). On the host only."""
+    runtime = _ready_runtime()
+    ref = _ref(path)
+    with runtime.dbs.state.read() as conn:
+        row = conn.execute(
+            select(files_table).where(
+                files_table.c.library_id == ref.library_id,
+                files_table.c.relpath == ref.relpath,
+                files_table.c.present.is_(True),
+            )
+        ).one_or_none()
+    if row is None:
+        _fail(f"{path} isn't a known file (run `steward scan` first?)")
+    typer.echo(f"{path}\n  file id {row.file_id}  {row.size} B")
+    if row.content_hash is None:
+        typer.echo("  not hashed (pending, unreadable or excluded)")
+        return
+    with runtime.dbs.index.read() as conn:
+        blob = conn.execute(
+            select(blobs_table.c.mime, blobs_table.c.kind).where(
+                blobs_table.c.content_hash == row.content_hash
+            )
+        ).one_or_none()
+        runs = conn.execute(
+            select(stage_runs.c.stage, stage_runs.c.status, stage_runs.c.error)
+            .where(stage_runs.c.content_hash == row.content_hash)
+            .order_by(stage_runs.c.stage)
+        ).all()
+        props = content.properties_of(conn, row.content_hash)
+    typer.echo(f"  content {row.content_hash} ({row.hash_kind})")
+    if blob is not None:
+        typer.echo(f"  type {blob.mime} ({blob.kind})")
+    typer.echo("stages:")
+    for run in runs:
+        note = f" ({run.error})" if run.error else ""
+        typer.echo(f"  {run.stage}: {run.status}{note}")
+    for artifact, values in props.items():
+        typer.echo(f"{artifact}:")
+        for key, value in values.items():
+            typer.echo(f"  {key}: {value}")
 
 
 @files_app.command("text")

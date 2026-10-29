@@ -29,6 +29,7 @@ Regenerate this file with `make notices`.
 | markdown-it-py       | 4.2.0   | MIT License                                   | https://github.com/executablebooks/markdown-it-py                                  |
 | mdurl                | 0.1.2   | MIT License                                   | https://github.com/executablebooks/mdurl                                           |
 | opentelemetry-api    | 1.45.1  | Apache-2.0                                    | https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-api |
+| pillow               | 13.0.0  | MIT-CMU                                       | https://python-pillow.org                                                          |
 | pycparser            | 3.12    | BSD-3-Clause                                  | https://github.com/eliben/pycparser                                                |
 | pydantic             | 2.14.1  | MIT                                           | https://github.com/pydantic/pydantic                                               |
 | pydantic_core        | 2.50.1  | MIT                                           | https://github.com/pydantic                                                        |

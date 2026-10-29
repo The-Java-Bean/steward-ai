@@ -24,6 +24,21 @@ modules: {}
 #      ocr_max_pages: 500
 #      ocr_timeout_s: 900 # time OCR of one document may take
 #      ocr_memory_mib: 1536
+#  photos:                # photo metadata and descriptions (on by default)
+#    settings:
+#      exif: true         # read dates, cameras, places (needs the exiftool program)
+#      exif_command: exiftool
+#      exif_timeout_s: 30
+#      exif_memory_mib: 512
+#      captions: true     # describe photos (needs a `caption` vision model in llm.yaml)
+#      caption_max_file_mib: 100  # larger images aren't described
+#      caption_min_side: 256      # nor smaller ones (icons, thumbnails), in pixels
+#      caption_max_side: 1024     # images are scaled down to this before sending
+#      caption_max_megapixels: 100
+#      caption_max_chars: 1000    # longest description kept
+#      caption_max_tokens: 512    # longest answer (reasoning models need more)
+#      caption_timeout_s: 60      # time decoding one image may take
+#      caption_memory_mib: 1024
 #  search:                # searching by meaning (on by default; needs an `embed`
 #    settings:            # model in llm.yaml, otherwise search works by words)
 #      batch_size: 16     # chunks per request to the embedding model

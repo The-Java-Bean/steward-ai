@@ -122,7 +122,7 @@ def test_stage_changes_accumulate() -> None:
     assert types["photo_scans"].stages_add == {"caption"}
     assert types["photo_scans"].stages_remove == {"ocr"}
     assert types["media_plus"].stages_add == {"exif", "caption", "extract"}
-    assert types["media_plus"].stages_remove == {"ocr", "chunk"}
+    assert types["media_plus"].stages_remove == {"ocr"}
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,7 @@ IMAGE ?= steward:dev
 
 # Licenses allowed for runtime (shipped) Python dependencies. Anything else fails
 # `make licenses` and needs a decision (and an ADR if it's accepted).
-ALLOWED_LICENSES := MIT;MIT License;BSD License;BSD-2-Clause;BSD-3-Clause;Apache Software License;Apache-2.0;ISC License (ISCL);ISC;Python Software Foundation License;PSF-2.0;Mozilla Public License 2.0 (MPL 2.0);MPL-2.0
+ALLOWED_LICENSES := MIT;MIT License;MIT-CMU;BSD License;BSD-2-Clause;BSD-3-Clause;Apache Software License;Apache-2.0;ISC License (ISCL);ISC;Python Software Foundation License;PSF-2.0;Mozilla Public License 2.0 (MPL 2.0);MPL-2.0
 
 RUNTIME_PACKAGES = $$($(UV) export --no-dev --no-emit-workspace --no-hashes --no-header --format requirements-txt | sed -n 's/^\([A-Za-z0-9._-]*\)==.*/\1/p')
 

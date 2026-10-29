@@ -6,18 +6,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 from support import make_module, make_runtime
 
 from steward.core import content
 from steward.core.config import DiscoverySettings
-from steward.core.db.schema import blobs, chunks, stage_runs
+from steward.core.db.schema import blobs, chunks, properties, stage_runs
 from steward.core.db.types import utcnow
 from steward.core.discovery import Scanner
 from steward.core.folders import store
 from steward.core.search import fts_query, split_snippet
 from steward.core.worker import Worker
-from steward.sdk import MATCH_MARKERS, ChunkPart, Registry, StageContext, TextPart
+from steward.sdk import (
+    MATCH_MARKERS,
+    ChunkPart,
+    PropertyValue,
+    Registry,
+    StageContext,
+    TextPart,
+)
 
 
 def test_writes_replace_and_clean(tmp_path: Path) -> None:
@@ -90,3 +98,85 @@ def test_stages_may_only_write_what_they_produce(tmp_path: Path) -> None:
     runtime.close()
     assert run.status == "failed"
     assert "doesn't produce artifact 'text:ocr'" in run.error
+
+
+def test_properties_round_trip_replace_and_validate(tmp_path: Path) -> None:
+    runtime = make_runtime(tmp_path)
+    with runtime.dbs.index.write() as conn:
+        conn.execute(
+            blobs.insert().values(
+                content_hash="b3:p", hash_kind="full", size=1, mime="image/jpeg",
+                kind="image", created_at=utcnow(),
+            )
+        )  # fmt: skip
+        values: dict[str, PropertyValue] = {
+            "taken": "2024-07-04T15:30:00",
+            "width": 800,
+            "lat": 47.5,
+            "flash": False,
+        }
+        content.write_properties(conn, "b3:p", "exif", {**values, "lens": None, "model": "  "})
+        assert content.read_properties(conn, "b3:p", "exif") == values
+        stored = conn.execute(
+            select(properties.c.key, properties.c.text, properties.c.num).order_by(properties.c.key)
+        ).all()
+        assert [tuple(r) for r in stored] == [
+            ("flash", None, 0.0),
+            ("lat", None, 47.5),
+            ("taken", "2024-07-04T15:30:00", None),
+            ("width", None, 800.0),
+        ]
+        content.write_properties(conn, "b3:p", "exif", {"width": 1024})
+        content.write_properties(conn, "b3:p", "fields", {"vendor": "ACME"})
+        assert content.properties_of(conn, "b3:p") == {
+            "exif": {"width": 1024},
+            "fields": {"vendor": "ACME"},
+        }
+        bad: list[dict[str, object]] = [
+            {"Bad Key": 1},
+            {"x": float("nan")},
+            {"x": 2**60},
+            {"x": "y" * 2001},
+            {"x": [1, 2]},
+            {f"k{i}": i for i in range(201)},
+        ]
+        for value in bad:
+            with pytest.raises((ValueError, TypeError)):
+                content.write_properties(conn, "b3:p", "exif", value)  # type: ignore[arg-type]
+        conn.execute(blobs.delete())
+        assert conn.execute(select(properties)).all() == []
+    runtime.close()
+
+
+def test_stages_read_and_write_properties_they_declare(tmp_path: Path) -> None:
+    seen: list[dict[str, PropertyValue]] = []
+
+    def write(ctx: StageContext) -> None:
+        ctx.write_properties({"pages": 3, "title": "Report"}, artifact="meta")
+
+    def read(ctx: StageContext) -> None:
+        seen.append(ctx.read_properties("meta"))
+        ctx.write_properties({"x": 1}, artifact="meta")  # not produced: refused
+
+    def register(r: Registry) -> None:
+        r.stage("props.write", write, version=1, requires=("mime",), produces=("meta",))
+        r.stage("props.read", read, version=1, requires=("meta",), produces=("other",))
+
+    runtime = make_runtime(tmp_path, (make_module("props", register=register),))
+    root = tmp_path / "lib"
+    root.mkdir()
+    (root / "a.txt").write_text("hello")
+    with runtime.dbs.state.write() as conn:
+        store.upsert_library(conn, "lib", root=str(root), actor="user:1")
+    Scanner(runtime.dbs, DiscoverySettings()).scan("lib")
+    Worker(runtime).drain()
+    with runtime.dbs.index.read() as conn:
+        run = conn.execute(
+            select(stage_runs.c.status, stage_runs.c.error).where(
+                stage_runs.c.stage == "props.read"
+            )
+        ).one()
+    runtime.close()
+    assert seen[0] == {"pages": 3, "title": "Report"}
+    assert run.status == "failed"
+    assert "doesn't produce artifact 'meta'" in run.error

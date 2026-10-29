@@ -221,6 +221,33 @@ def chunk(ctx: StageContext) -> None:  # requires=("text",), produces=("chunks",
 - Each write replaces what was stored for that content and kind. Empty bodies are
   dropped from chunks; NUL and the snippet marker characters are removed.
 
+**Properties** are structured metadata per content (dates, cameras, amounts), stored in
+the core too, so the file manager can show them and search can filter on them later
+([ADR 0024](adr/0024-photos-and-properties.md)):
+
+```python
+def exif(ctx: StageContext) -> None:  # produces=("exif",)
+    ctx.write_properties(
+        {"taken": "2024-07-04T15:30:00+02:00", "width": 4000, "lens": None}, artifact="exif"
+    )
+```
+
+Names are snake_case (at most 64 characters, 200 per artifact); values are `str`,
+`int`, `float` or `bool`; None and empty strings are left out; strings longer than
+2000 characters raise `ValueError`. `ctx.read_properties(artifact)` reads them back
+(same rules as `read_text`).
+
+**Well-known artifact kinds** (stages of different modules meet through these names):
+
+| Kind | Written by | What it is |
+|---|---|---|
+| `text` | `documents.extract` | a document's text, per page or section |
+| `text:ocr` | `documents.ocr` | the text with OCR'd pages filled in |
+| `text:caption` | `photos.caption` | a description of an image (one part); `documents.chunk` chunks it after the document's own text, so it's searchable |
+| `chunks` | `documents.chunk` | retrieval units, full-text searchable |
+| `embeddings` | `search.embed` | vectors for searching by meaning |
+| `exif` | `photos.exif` | properties `taken` (ISO 8601, offset or `Z` when known), `camera`, `lens`, `width`, `height`, `orientation` (1-8), `rotation`, `latitude`, `longitude`, `altitude`, `duration_s` |
+
 ### Parsing untrusted files
 
 Run parsers with `ctx.run_isolated(fn, timeout_s=..., memory_mib=...)`: `fn(file)` runs

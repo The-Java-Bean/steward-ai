@@ -348,6 +348,11 @@ class RoleConfig(_Strict):
     structured: Literal["json_schema", "json_mode", "prompted"] = "prompted"
     tools: Literal["native", "prompted", "none"] = "none"
     context: int | None = Field(None, ge=512)
+    reasoning: Literal["default", "none", "low", "medium", "high"] = "default"
+    """Chat roles: how much a reasoning ("thinking") model reasons before it answers,
+    sent as `reasoning_effort`; `default` sends nothing. `none` makes background roles
+    such as `caption` much faster, and keeps the reasoning from using up the answer's
+    token limit."""
     local_fallback: str | None = None
     """A role on a `local` endpoint to use instead when the request may not go to this
     role's endpoint (chat surfaces offer this; background jobs wait instead)."""

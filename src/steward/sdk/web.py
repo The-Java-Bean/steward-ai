@@ -22,7 +22,7 @@ to its re-auth page, so module code doesn't handle it).
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from fastapi.responses import Response
 
     from steward.sdk.actions import PathPrivacy
+    from steward.sdk.stages import PropertyValue
     from steward.sdk.state import StateAccess
 
 Scope = Literal["normal", "locked"]
@@ -98,6 +99,16 @@ class Entry:
     semantic: bool = False
     """Search results only: found by meaning, not by a word in its name or text (the
     snippet is then the start of its closest passage)."""
+
+
+@dataclass(frozen=True, slots=True)
+class FileDetails:
+    """What steward-ai learned about a file's content (empty until its stages ran)."""
+
+    description: str | None = None
+    """A description of the image (`text:caption`, from the `photos` module)."""
+    properties: Mapping[str, Mapping[str, PropertyValue]] = field(default_factory=dict)
+    """Structured metadata by artifact (`exif`…), then property name."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +238,11 @@ class Files(Protocol):
         """The privacy class of each `library:path` (whether it's hidden in normal views,
         whether it may be shared and why not). Works for paths that don't exist (the
         folder rules still apply); unparseable paths come back hidden."""
+        ...
+
+    def details(self, path: str, *, scope: Scope = "normal") -> FileDetails:
+        """What the pipeline stored about a file's content: a description and properties
+        (date taken, camera…). Raises `NotFound`, also for folders."""
         ...
 
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:
