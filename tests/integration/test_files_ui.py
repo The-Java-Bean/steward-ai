@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -216,8 +217,12 @@ def test_new_folder_then_undo(client: TestClient, env: Env) -> None:
     assert made.status_code == 303
     assert (env.root / "docs/Taxes").is_dir()
     page = client.get(made.headers["location"])
-    assert "Folder created." in page.text
-    assert "Undo" in page.text
+    # The message and its Undo button are one bar (the layout's own notice isn't used).
+    bar = re.search(r'<div class="notice notice-bar"[^>]*>(.*?)</div>', page.text, re.S)
+    assert bar, page.text
+    assert "Folder created." in bar.group(1)
+    assert ">Undo</button>" in bar.group(1)
+    assert page.text.count("Folder created.") == 1
     undone = client.post("/ui/files/undo", data={"entries": _undo_ids(made), "back": "lib:docs"})
     assert undone.status_code == 303
     assert not (env.root / "docs/Taxes").exists()

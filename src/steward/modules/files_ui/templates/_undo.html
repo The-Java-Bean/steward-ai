@@ -1,8 +1,13 @@
-{% if undo %}
-<form method="post" action="{{ undo_base or base }}/undo" class="undo-bar">
-  <input type="hidden" name="csrf_token" value="{{ form_token }}">
-  <input type="hidden" name="entries" value="{{ undo }}">
-  <input type="hidden" name="back" value="{{ listing.path if listing else (folder or '') }}">
-  <button type="submit" class="small secondary">Undo</button>
-</form>
+{% if done_notice or undo %}
+<div class="notice notice-bar" role="status">
+  {% if done_notice %}<span>{{ done_notice }}</span>{% endif %}
+  {% if undo %}
+  <form method="post" action="{{ undo_base or base }}/undo">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="entries" value="{{ undo }}">
+    <input type="hidden" name="back" value="{{ listing.path if listing else (folder or '') }}">
+    <button type="submit" class="small secondary">Undo</button>
+  </form>
+  {% endif %}
+</div>
 {% endif %}

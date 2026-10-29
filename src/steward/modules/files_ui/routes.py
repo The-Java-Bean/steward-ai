@@ -120,7 +120,7 @@ def make_router(scope: Scope) -> APIRouter:
         context = common(
             web,
             libraries=libraries,
-            notice=_done(did, n),
+            done_notice=_done(did, n),
             undo=",".join(str(i) for i in _undo_ids(undo)),
         )
         if kind:

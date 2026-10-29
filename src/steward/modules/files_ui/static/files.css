@@ -15,7 +15,8 @@ table.files .num { text-align: right; white-space: nowrap; }
 .row-actions { white-space: nowrap; font-size: 0.9rem; }
 .row-actions a + a { margin-left: 0.5rem; }
 a.dir { font-weight: 600; }
-.undo-bar { margin: 0.5rem 0; }
+.notice-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; margin: 0.5rem 0; }
+.notice-bar form { margin: 0; }
 .filename { overflow-wrap: anywhere; }
 .preview { margin: 1rem 0; }
 .preview img, .preview video { max-width: 100%; max-height: 80vh; display: block; }

@@ -7,6 +7,14 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 2 acceptance tests (`tests/acceptance/`): each criterion end to end over HTTP,
+  starting from a fresh install finished through the setup wizard, on two folder
+  layouts: an upload resumed after a dropped connection and a server restart; locked
+  folders hidden from every normal page, search, zip and API read without a fresh
+  password, and uploads into the Locked Folder; a permanent lock surviving every way to
+  remove it except the host CLI; no-expiry shares (warning, password, listing) and
+  revoked shares (Past, every link URL gone). The 5 GB browser upload was checked by
+  hand against the container image.
 - Share links (`shares`, a built-in module on by default; ADR 0020): share a file or a
   folder from the file manager as a public link `/s/<token>` (128-bit token) with an
   expiry (7 days by default, 1/7/30 days, any number of days, or none: allowed with a
@@ -162,6 +170,9 @@ All notable changes to steward-ai are recorded here. The format follows
   allow-list, generated `THIRD_PARTY_NOTICES.md`.
 
 ### Changed
+- File manager: the message after a change ("Folder created." and so on) and its Undo
+  button are now one bar, instead of the message at the top of the page and the button
+  on a separate row below.
 - `JobContext` has a new required field `state` (built by the worker).
 - `files_ui` 0.3.0: "Share" and "Share folder…" links (when the `shares` page exists; never in
   the Locked Folder).
