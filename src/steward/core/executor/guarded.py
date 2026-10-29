@@ -46,6 +46,8 @@ from steward.core.folders.policy import Library, Policy
 from steward.sdk import ActionRefused, PathPolicy, PathState
 
 TEMP_PREFIX = ".steward-tmp-"
+UPLOAD_PREFIX = TEMP_PREFIX + "up-"
+"""Unfinished uploads: `<UPLOAD_PREFIX><upload_id>` in the destination folder."""
 """Temporary files the executor writes before linking them into place (discovery
 ignores them)."""
 CHUNK = 1 << 20

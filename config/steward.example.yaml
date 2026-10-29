@@ -52,3 +52,14 @@ backup:
   # Before a migration changes existing databases, a backup at most this old must
   # exist; `steward api` and `steward db upgrade` take one first if not.
   max_age_before_migrate_hours: 24
+
+uploads:
+  # Uploads go up in pieces of at most this many MiB, so a dropped connection loses at
+  # most one piece. A reverse proxy in front must accept request bodies this big
+  # (nginx: client_max_body_size 16m; Caddy and Traefik accept them by default).
+  chunk_mib: 8
+  # The largest file accepted (default: no limit; free space is always checked).
+  # max_file_gib: 50
+  # Unfinished uploads untouched this long are removed (hourly, by steward api).
+  stale_hours: 24
+  max_open: 100

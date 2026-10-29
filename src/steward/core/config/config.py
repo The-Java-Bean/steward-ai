@@ -105,6 +105,20 @@ class BackupConfig(_Strict):
     there's none, `steward api` and `steward db upgrade` take one first."""
 
 
+class UploadsConfig(_Strict):
+    """Resumable uploads through the browser or `/api/v1/uploads`."""
+
+    chunk_mib: int = Field(8, ge=1, le=64)
+    """The largest piece accepted in one request. A reverse proxy in front must accept
+    request bodies at least this big (nginx: `client_max_body_size`)."""
+    max_file_gib: float | None = Field(None, gt=0)
+    """The largest file accepted; no limit by default (free space is always checked)."""
+    stale_hours: int = Field(24, ge=1)
+    """Unfinished uploads untouched this long are removed."""
+    max_open: int = Field(100, ge=1, le=10_000)
+    """Unfinished uploads allowed at once."""
+
+
 class StewardConfig(_ConfigFile):
     data_dir: Path = Path("/data")
     """Databases, caches and backups. Must be on a local disk (SQLite)."""
@@ -118,6 +132,7 @@ class StewardConfig(_ConfigFile):
     api: ApiConfig = ApiConfig()
     setup: SetupConfig = SetupConfig()
     backup: BackupConfig = BackupConfig()
+    uploads: UploadsConfig = UploadsConfig()
 
     @field_validator("timezone")
     @classmethod

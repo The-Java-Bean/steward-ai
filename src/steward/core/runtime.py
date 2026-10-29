@@ -10,10 +10,16 @@ from functools import cached_property, partial
 from pathlib import Path
 
 from steward.core.auth import Auth
-from steward.core.builtin import register_backup, register_core, register_deliveries
+from steward.core.builtin import (
+    register_backup,
+    register_core,
+    register_deliveries,
+    register_uploads,
+)
 from steward.core.config import Config, ConfigError
 from steward.core.db import Database, Databases, migrate
 from steward.core.executor import Executor
+from steward.core.executor.uploads import Uploads
 from steward.core.llm import Gateway, check_llm_config
 from steward.core.loader import (
     EntryPointLike,
@@ -59,6 +65,10 @@ class Runtime:
             self.registrations.actions(),
             max_attempts=self.config.pipeline.jobs.max_attempts,
         )
+
+    @cached_property
+    def uploads(self) -> Uploads:
+        return Uploads(self.dbs, self.executor, self.config.steward.uploads)
 
     @cached_property
     def gateway(self) -> Gateway:
@@ -109,6 +119,7 @@ def build_runtime(
     register_deliveries(modules.registrations, dbs)
     built: list[Runtime] = []
     register_backup(modules.registrations, config, lambda: built[0])
+    register_uploads(modules.registrations, lambda: built[0])
     stages = build_graph(modules.registrations.stages())
     planner = register_stage_jobs(modules.registrations, dbs, stages, config)
     try:

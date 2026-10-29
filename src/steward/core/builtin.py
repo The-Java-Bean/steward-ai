@@ -22,6 +22,7 @@ from steward.core.stages import register_hash_stage
 from steward.sdk import (
     Daily,
     EventHandler,
+    Every,
     HealthResult,
     JobContext,
     JobHandler,
@@ -121,3 +122,20 @@ def register_backup(
     r.job(BACKUP_JOB, run, lane="io")
     r.schedule(BACKUP_JOB, Daily(time(3, 30)), job=BACKUP_JOB)
     r.health_check("core.backup", check)
+
+
+UPLOADS_EXPIRE_JOB = "core.uploads.expire"
+
+
+def register_uploads(registrations: Registrations, runtime: Callable[[], Runtime]) -> None:
+    """Hourly removal of abandoned uploads. Its lane is `executor`, so it runs in
+    `steward api` (the worker mounts libraries read-only)."""
+    r = Registry("core", None, registrations)
+
+    def run(ctx: JobContext) -> None:
+        removed = runtime().uploads.expire()
+        if removed:
+            log.info("expired unfinished uploads", extra={"fields": {"removed": removed}})
+
+    r.job(UPLOADS_EXPIRE_JOB, run, lane="executor")
+    r.schedule(UPLOADS_EXPIRE_JOB, Every(timedelta(hours=1)), job=UPLOADS_EXPIRE_JOB)

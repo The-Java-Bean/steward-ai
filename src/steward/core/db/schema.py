@@ -406,3 +406,27 @@ journal = Table(
 """Every applied action with what it did (`result`, including the state it left the
 files in) and its undo plan (`inverse`, None if it can't be undone). Rows are never
 deleted."""
+
+uploads = Table(
+    "uploads",
+    state_metadata,
+    Column("upload_id", Text, primary_key=True),
+    Column("library_id", Text, nullable=False),
+    Column("folder", Text, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("size", Integer, nullable=False),
+    Column("received", Integer, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("confirmed", Boolean, nullable=False),
+    Column("actor", Text, nullable=False),
+    Column("entry_id", Integer, ForeignKey("journal.entry_id", ondelete="SET NULL")),
+    Column("created_at", UTCDateTime, nullable=False),
+    Column("updated_at", UTCDateTime, nullable=False),
+    CheckConstraint(
+        "status IN ('open', 'finished', 'cancelled', 'expired')", name="ck_uploads_status"
+    ),
+    Index("ix_uploads_status", "status", "updated_at"),
+)
+"""Resumable uploads (`core.executor.uploads`): the bytes so far live in
+`.steward-tmp-up-<upload_id>` inside `library_id:folder`; `received` is how many are
+written (always a chunk boundary). Finished rows point at the `file.upload` entry."""

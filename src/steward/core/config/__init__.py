@@ -30,6 +30,7 @@ from steward.core.config.config import (
     RoleConfig,
     SetupConfig,
     StewardConfig,
+    UploadsConfig,
     load_config,
     load_folders_file,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "RoleConfig",
     "SetupConfig",
     "StewardConfig",
+    "UploadsConfig",
     "load_config",
     "load_folders_file",
 ]

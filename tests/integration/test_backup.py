@@ -53,7 +53,7 @@ def test_backup_copies_databases_exports_state_and_prunes(tmp_path: Path) -> Non
         assert "sessions" not in exported["core"]
         assert "jobs" not in exported["core"]
         manifest = json.loads((latest / "manifest.json").read_text())
-        assert manifest["migrations"]["state"]["core"] == "0005"
+        assert manifest["migrations"]["state"]["core"] == "0006"
         assert set(manifest["files"]) == {"index.db", "state.db", "state.json"}
     finally:
         runtime.close()

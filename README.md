@@ -22,9 +22,8 @@ file managers) through optional integration modules, without requiring any of th
 ## For humans
 
 ### What it does *(planned)*
-- **File manager in the browser** *(implemented, except uploads)*: browse, preview,
-  upload (large files, resumable; *planned*), download, move, rename and delete (to a
-  trash folder, with undo).
+- **File manager in the browser** *(implemented)*: browse, preview, upload (large files,
+  resumable), download, move, rename and delete (to a trash folder, with undo).
 - **Search:** keyword search over names and metadata; with an AI model connected, full
   text, OCR of scans, photo captions and meaning-based search.
 - **Tags:** automatic tagging from a vocabulary you control.
@@ -220,7 +219,7 @@ Key files, password databases, `.env` files and similar are excluded by default.
 model calls go through one gateway that enforces this; remote model servers aren't
 supported yet and are refused at startup.
 
-### File manager *(implemented; uploads come next)*
+### File manager *(implemented)*
 **Files** (`/ui/files`) is your drive in the browser. Browse by folder, or by kind
 (images, videos, documents, …) across every library. Click a file to preview it
 (images, PDFs, text, audio and video play in the page) or download it; download a whole
@@ -232,6 +231,18 @@ folders and the trash don't appear here (the Locked Folder view comes next), sym
 are never shown or followed, and search results link straight to their files. The
 file manager is a built-in module, `files_ui`; turn it off in `modules.yaml` with
 `files_ui: {enabled: false}`.
+
+**Uploading:** drop files on a folder's page, or click *Choose files*. Files of any
+size go up in pieces (8 MiB by default), so a dropped connection, a laptop going to
+sleep or a restart of steward-ai only pauses them: they carry on by themselves, and if
+you close the browser, choosing the same file again in the same folder picks up where
+it stopped (the folder page lists unfinished uploads, which you can also cancel). An
+upload never replaces an existing file: if the name is taken, you can keep both (the
+new one gets a name like `report (2).pdf`) or skip it. Each upload is in the Journal,
+and undoing it moves the file to the trash. Uploading needs JavaScript. Unfinished
+uploads are removed after 24 hours (`uploads.stale_hours`). Behind a reverse proxy,
+allow request bodies of at least the piece size (nginx: `client_max_body_size 16m;`).
+Scripts can use the same protocol at `/api/v1/uploads` (see the API section).
 
 ### Changes, undo, jobs and health *(implemented)*
 steward-ai changes files only through its executor: never overwriting, never following
@@ -245,8 +256,9 @@ since. **Jobs** (`/ui/jobs`) shows the background queue and retries jobs that ga
 ### API *(implemented)*
 `/api/v1` offers libraries, folders, files, search, the journal, jobs and health as
 JSON, with its description at `/api/v1/openapi.json`. A token with the `read` scope
-can read; running actions, undo and retrying jobs need a logged-in session with its
-CSRF token in `X-CSRF-Token`. Locked folders never appear in API answers to tokens.
+can read; running actions, undo, retrying jobs and uploads (`/api/v1/uploads`: `POST`
+to start, `PUT` pieces with an `Upload-Offset` header, `POST …/finish`) need a
+logged-in session with its CSRF token in `X-CSRF-Token`. Locked folders never appear in API answers to tokens.
 
 ### Backups *(implemented)*
 ```sh
@@ -303,9 +315,9 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
-- **Phase 2 (files, Locked Folder, shares) in progress: chunk 1 of 5 done** (module web
-  SDK + `files_ui` file manager, ADR 0017). Next: chunk 2 resumable uploads; then 3
-  Locked Folder, 4 `shares`, 5 acceptance + test environment.
+- **Phase 2 (files, Locked Folder, shares) in progress: chunks 1–2 of 5 done** (1:
+  module web SDK + `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018).
+  Next: chunk 3 Locked Folder; then 4 `shares`, 5 acceptance + test environment.
 - **Phase 0 done. Phase 1 (core): all 6 chunks done** (1: config, databases and migrations, job queue, events, scheduler,
   worker; 2: libraries, folder types, mappings, locks, roles, folder identity; 3:
   discovery: scanner, watcher, hashing, file identity; 3b: stage SDK, graph, planner,
@@ -314,7 +326,7 @@ steps, log). Read them first if present. A maintainer-only design document
   classification + model gateway (ADR 0015), executor/journal/undo + safety harness
   (ADR 0014), keyword search, `/api/v1`, `/ui/search|journal|jobs|health`,
   `/ui/settings/folders`, `steward backup|export` + pre-migration backups (ADR 0016)).
-- Not yet: uploads (Phase 2 chunk 2), the Locked Folder view (chunk 3), shares (chunk 4), a trash view in the file manager, `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
+- Not yet: the Locked Folder view (chunk 3), shares (chunk 4), a trash view in the file manager, `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
   step, remote model endpoints (`remote_llm` module), proposals/approval, htmx (no JS
   so far), libraries and roles editable in the UI (CLI only).
 
@@ -384,6 +396,10 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy)` (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `listing`, `entry`, `by_kind` (search with empty query), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
 | `src/steward/api/web.py` | The core's `Web` implementation: `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
 | `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.1.0 (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (page `files_ui.page` at `/ui/files` with `templates/` + `static/files.css`, link builder `files_ui.links`); `routes.py`: `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries or redirect to the only one; `did`/`n`/`undo` query → notice + Undo button), `GET /view`, `GET /raw` (`inline=1`), `GET /zip` (`path` repeated), `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker via `to=`), `GET|POST /delete` (confirm page, then `run_all`), `POST /undo` (`entries` comma list, `back`); templates `browse`, `kind`, `libraries`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo` |
+| `src/steward/core/executor/uploads.py` | `Uploads(dbs, executor, UploadsConfig, clock=)` (`Runtime.uploads`): `start(folder, name, size, actor=, confirmed=)` (checks; creates `UPLOAD_PREFIX + id` exclusively; `SensitiveActionError` for locked folders unless `confirmed`), `get`, `list_open(actor=)`, `write(id, offset, data, actor=)` (per-upload `threading.Lock`; offset must equal `received`; truncates a longer temp file; `pwrite` + `fsync`), `finish(id, actor=, name=)` (runs `file.upload` with `confirmed or info.confirmed`), `cancel`, `expire()`; `UploadInfo` (`path`, `temp`, `as_dict`), errors `UploadNotFound`, `UploadConflict(suggestion)`, `OffsetMismatch(offset)` (all `ActionRefused`); `FREE_SPACE_MARGIN` 64 MiB |
+| `src/steward/api/routes/uploads.py` | `/api/v1/uploads` (default `session` level): `POST ""` (`StartBody` folder/name/size/scope; `Browser.locate` for the scope; locked scope → `is_recent` or `require_recent_auth`, then `confirmed=True`), `GET ""` (`?scope=`; filtered by `Browser.visible`), `GET /{id}`, `PUT /{id}` (async; 415 unless `application/offset+octet-stream`/`octet-stream`, 400 without `Upload-Offset`, 413 over `chunk_bytes`, `ClientDisconnect` → 400 with nothing written; write in the threadpool), `POST /{id}/finish` (`FinishBody` name), `DELETE /{id}` (204); `_refusal` maps errors to 409 (+`suggestion`/`offset`), 404, 403, 400, 500 |
+| `src/steward/modules/files_ui/static/upload.js` | Browser client: queue, one file at a time; resume via `localStorage` (`steward.uploads.v1`, key folder+name+size+lastModified) or the server's open list; backoff up to 30 s, 40 failures; keep-both/skip buttons on 409; Cancel; lists unfinished uploads of the folder at load; reloads when all succeeded. Shown only on writable folders (`#uploads` section, `data-folder`, `data-scope`, `data-csrf`) |
+| `tests/integration/test_uploads.py` | Uploads: pieces + finish + undo, offset mismatch and crash truncation, collisions ("keep both"), bad destinations, symlinked folders, locked folders (confirmed start, 0600), free space and size limits, cancel/expire, ownership, discovery ignores temps, `file.upload` refusals; HTTP flow with a dropped piece, refusals (413/415/400/409/404), scopes, CSRF/tokens, the page's upload panel, re-auth window 0 |
 | `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
 | `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `search QUERY [--library --folder --kind --limit]`, `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
@@ -401,7 +417,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/executor_support.py`, `tests/executor/test_action_safety.py`, `tests/integration/test_executor.py` | `ExecEnv` (runtime + library + scan/map/lock helpers), `build_tree`, `snapshot`; the safety harness parametrized over every registered action's `examples` (`NO_EXAMPLES = {"folder.unlock"}`); executor flows (trash, locked trash, edits, journal, events, identities) |
 | `tests/privacy/test_privacy_suite.py`, `tests/unit/test_privacy_rules.py` | Gateway with a fake transport: every plan §9.6 case, log scan for content, trust/remote config errors, only `core.llm` uses `urllib`/`openai`; rule matching |
 | `tests/integration/test_search.py`, `test_backup.py`, `test_api_v1.py` | Search on two layouts (hidden/locked/trash excluded, filters, Unicode); backups, prune, export contents, pre-migrate backup; `/api/v1` and the new UI pages (tokens never see locked folders or change anything, session actions + undo, journal redaction, OpenAPI, folder unlock re-auth) |
-| `docs/adr/` | ADRs 0001–0017, index, template |
+| `docs/adr/` | ADRs 0001–0018, index, template |
 | `docs/modules.md` | Module authoring guide |
 | `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | Keep a Changelog; generated by `make notices` |
 
@@ -612,6 +628,23 @@ steps, log). Read them first if present. A maintainer-only design document
   `files_ui` is absent elsewhere. Real installs find it through its entry point
   (`uv sync` after changing entry points).
 
+### Uploads (implemented; ADR 0018)
+- State revision `0006`: `uploads` (not exported: transient). `config.steward.uploads`
+  (`UploadsConfig`: `chunk_mib` 8 (1–64), `max_file_gib`, `stale_hours` 24, `max_open` 100).
+- Temp file `UPLOAD_PREFIX` (`.steward-tmp-up-`) + 32 hex chars in the destination
+  folder; `TEMP_PREFIX` names are hidden by `Browser.visible` and skipped by discovery.
+- `file.upload` (`UploadParams` temp/path/size): temp must match `UPLOAD_TEMP` and sit
+  in the same folder; preconditions temp = file of `size`, path absent; apply =
+  `fs.move`; post-state without content hash; inverse = `file.delete` plan (so undoing
+  an upload is sensitive, like undoing `file.create`). In `NO_EXAMPLES` of the safety
+  harness.
+- Job `core.uploads.expire` (lane `executor`, `Every(1h)`) registered by
+  `builtin.register_uploads` after modules (closure over the runtime).
+- The guard parses forms only for urlencoded/multipart, so raw `PUT` bodies reach the
+  route untouched; CSRF comes from `X-CSRF-Token`.
+- Manual browser runs: `~/steward-sandbox`-style instance + Playwright (see the
+  handoff); not part of `make check`.
+
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
   version tables `alembic_version_<owner>`.
@@ -724,7 +757,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 0. ~~Foundation: repo skeleton, SDK `Module`/`Registry`, module loader, ADRs, license.~~ Done.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
-2. File manager, Locked Folder, built-in shares *(in progress: chunk 1 of 5 done — module web SDK + `files_ui`)*.
+2. File manager, Locked Folder, built-in shares *(in progress: chunks 1–2 of 5 done — module web SDK + `files_ui`, resumable uploads)*.
 3. Indexing and tagging (documents, search, fields, tags, photos).
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).

@@ -23,6 +23,7 @@ from steward.api.routes import home as home_routes
 from steward.api.routes import pages as page_routes
 from steward.api.routes import settings as settings_routes
 from steward.api.routes import setup as setup_routes
+from steward.api.routes import uploads as upload_routes
 from steward.api.security import (
     ApiState,
     NeedLogin,
@@ -91,6 +92,7 @@ def create_app(runtime: Runtime, *, setup_token: SetupToken | None = None) -> Fa
         settings_routes.router,
         page_routes.router,
         api_v1.router,
+        upload_routes.router,
     ):
         app.include_router(router)
     nav.extend(_mount_module_pages(app, runtime))

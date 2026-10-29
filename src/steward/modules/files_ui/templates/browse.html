@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ listing.name }}{% endblock %}
-{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">
+{% if listing.writable %}<script src="{{ static_url }}/upload.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% include "files_ui/_nav.html" %}
 {% include "files_ui/_crumbs.html" %}
@@ -20,6 +21,17 @@
   {% endif %}
   <a class="button small secondary" href="/ui/files/zip?path={{ listing.path|urlencode }}">Download folder (zip)</a>
 </div>
+
+{% if listing.writable %}
+<section class="uploads" id="uploads" data-folder="{{ listing.path }}" data-scope="normal" data-csrf="{{ form_token }}" hidden>
+  <div class="dropzone" id="dropzone">
+    <span>Drop files here to upload them, or</span>
+    <label class="button small">Choose files<input type="file" id="upload-input" multiple class="sr-only"></label>
+  </div>
+  <ul class="upload-list" id="upload-list"></ul>
+</section>
+<noscript><p class="hint">Uploading needs JavaScript.</p></noscript>
+{% endif %}
 
 {% if listing.entries %}
 <form method="get" action="/ui/files/zip" id="selection">

@@ -7,6 +7,13 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Resumable uploads (ADR 0018): drag-and-drop or choose files in the file manager; large
+  files go up in pieces, survive dropped connections and server restarts, and resume
+  when the same file is chosen again (even after closing the browser); a name that's
+  taken offers "keep both". `/api/v1/uploads` (start, `PUT` pieces with
+  `Upload-Offset`, finish, status, list, cancel), `file.upload` action (undo = trash),
+  state revision `0006` (`uploads`), `uploads:` in `steward.yaml`, hourly
+  `core.uploads.expire`.
 - File manager (`files_ui`, the first built-in module, on by default) at `/ui/files`:
   browse by folder or by kind, previews (images, PDF, text, audio, video), downloads
   with byte ranges, folders and selections as streamed zips, new folder, rename, move

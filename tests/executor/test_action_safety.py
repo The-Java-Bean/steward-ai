@@ -20,7 +20,7 @@ from support import make_runtime
 from steward.core.executor import ActionFailed
 from steward.sdk import ActionRefused, ActionType, PathField
 
-NO_EXAMPLES = {"folder.unlock"}
+NO_EXAMPLES = {"folder.unlock", "file.upload"}
 """Action types that need setup the shared tree doesn't have; tested elsewhere."""
 
 

@@ -23,5 +23,6 @@ a later record supersedes an earlier one and both say so.
 | [0015](0015-privacy-implementation.md) | Privacy in practice: classification, the gateway and visibility | Accepted |
 | [0016](0016-backups.md) | Backups, exports and migrations | Accepted |
 | [0017](0017-module-web-services.md) | Web services for module pages; the file manager is a module | Accepted |
+| [0018](0018-resumable-uploads.md) | Resumable uploads | Accepted |
 
 New record: copy [`template.md`](template.md) to the next number, and add it to this table.

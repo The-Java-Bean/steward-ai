@@ -6,11 +6,12 @@ modules."""
 
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from steward.core.executor.guarded import content_hash, within
+from steward.core.executor.guarded import UPLOAD_PREFIX, content_hash, within
 from steward.sdk import (
     ActionRefused,
     AiMode,
@@ -491,6 +492,65 @@ class Create(_Action):
         ]
 
 
+UPLOAD_TEMP = re.compile(rf"^{re.escape(UPLOAD_PREFIX)}[0-9a-f]{{32}}$")
+
+
+class UploadParams(_Params):
+    temp: LibraryPath
+    """The finished upload's temporary file, in the same folder as `path`."""
+    path: LibraryPath
+    size: int = Field(ge=0)
+
+
+class Upload(_Action):
+    """Put a finished upload in place (`core.executor.uploads` wrote the bytes into a
+    hidden temporary file next to it). Never overwrites; undo moves it to the trash."""
+
+    name = "file.upload"
+    params = UploadParams
+    ai_mode = "proposal"
+
+    def plan(self, params: BaseModel, view: ReadOnlyFS) -> Plan:
+        assert isinstance(params, UploadParams)  # noqa: S101
+        if not UPLOAD_TEMP.match(_name(params.temp)) or _parent(params.temp) != _parent(
+            params.path
+        ):
+            raise ActionRefused("not an upload in the destination folder")
+        if _name(params.path).startswith(".steward-tmp-"):
+            raise ActionRefused("that name is reserved for steward-ai's temporary files")
+        temp = _existing(view, params.temp)
+        if temp.kind != "file" or temp.size != params.size:
+            raise ActionRefused("the upload isn't complete")
+        return Plan(
+            self.name,
+            params.model_dump(mode="json"),
+            f"Upload {params.path}",
+            preconditions=(PathState(params.temp, "file", params.size), _absent(view, params.path)),
+            reads=(params.temp,),
+            writes=(params.temp, params.path),
+        )
+
+    def apply(self, plan: Plan, fs: GuardedFS) -> Applied:
+        p = UploadParams.model_validate(plan.params)
+        fs.move(p.temp, p.path)
+        # No content hash: re-reading a large upload here would hold the write lock for
+        # a long time. Size and modification time catch later changes.
+        return Applied({"path": p.path}, post=(fs.state(p.path),), changed=(p.path,))
+
+    def inverse(self, plan: Plan, applied: Applied, view: ReadOnlyFS) -> Plan | None:
+        path = str(applied.result["path"])
+        trash = Delete().plan(DeleteParams(path=path), view)
+        return Plan(
+            trash.action,
+            trash.params,
+            f"Move {path} (uploaded) to the trash",
+            preconditions=(applied.post[0], *trash.preconditions[1:]),
+            reads=trash.reads,
+            writes=trash.writes,
+            data=trash.data,
+        )
+
+
 class EditParams(_Params):
     path: LibraryPath
     content: str | None = Field(None, max_length=MAX_TEXT_BYTES)
@@ -682,6 +742,7 @@ BUILTIN_ACTIONS: tuple[type[_Action], ...] = (
     Rename,
     Delete,
     Create,
+    Upload,
     Edit,
     Lock,
     Unlock,
