@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Rename{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/ui/files?path={{ folder|urlencode }}">← {{ folder }}</a></p>
+<h1>Rename</h1>
+<form method="post" action="/ui/files/rename">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="path" value="{{ entry.path }}">
+  <label>New name for <strong>{{ entry.name }}</strong>
+    <input name="new_name" value="{{ entry.name }}" maxlength="255" required autofocus>
+  </label>
+  <button type="submit">Rename</button>
+  <a href="/ui/files?path={{ folder|urlencode }}">Cancel</a>
+</form>
+{% endblock %}

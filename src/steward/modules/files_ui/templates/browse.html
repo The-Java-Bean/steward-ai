@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ listing.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+{% include "files_ui/_nav.html" %}
+{% include "files_ui/_crumbs.html" %}
+{% include "files_ui/_undo.html" %}
+<h1>{{ listing.name }}</h1>
+<p class="hint">Folder type <strong>{{ listing.type_name }}</strong>{% if not listing.writable %} · read-only{% endif %}{% if not listing.shareable %} · not shareable{% endif %}</p>
+
+<div class="toolbar">
+  {% if listing.writable %}
+  <form method="post" action="/ui/files/mkdir" class="inline-row">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="folder" value="{{ listing.path }}">
+    <label class="sr-only" for="new-folder">New folder name</label>
+    <input id="new-folder" name="name" placeholder="New folder name" maxlength="255" required>
+    <button type="submit" class="small">New folder</button>
+  </form>
+  {% endif %}
+  <a class="button small secondary" href="/ui/files/zip?path={{ listing.path|urlencode }}">Download folder (zip)</a>
+</div>
+
+{% if listing.entries %}
+<form method="get" action="/ui/files/zip" id="selection">
+<table class="files">
+  <thead><tr><th class="pick"><span class="sr-only">Select</span></th><th>Name</th><th>Kind</th><th class="num">Size</th><th>Modified</th><th></th></tr></thead>
+  <tbody>
+  {% for e in listing.entries %}
+    <tr>
+      <td class="pick"><input type="checkbox" name="path" value="{{ e.path }}" aria-label="Select {{ e.name }}"></td>
+      {% if e.kind == 'dir' %}
+      <td><a href="/ui/files?path={{ e.path|urlencode }}" class="dir">{{ e.name }}/</a></td>
+      <td>folder</td><td class="num"></td>
+      {% else %}
+      <td><a href="/ui/files/view?path={{ e.path|urlencode }}">{{ e.name }}</a></td>
+      <td>{{ e.file_kind or '' }}</td><td class="num">{{ e.size|filesizeformat }}</td>
+      {% endif %}
+      <td>{{ e.modified.strftime('%Y-%m-%d %H:%M') if e.modified else '' }}</td>
+      <td class="row-actions">
+        {% if e.kind == 'file' %}<a href="/ui/files/raw?path={{ e.path|urlencode }}">Download</a>{% endif %}
+        {% if listing.writable %}<a href="/ui/files/rename?path={{ e.path|urlencode }}">Rename</a>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="toolbar">
+  <span class="hint">With the selected:</span>
+  <button type="submit" class="small secondary">Download (zip)</button>
+  {% if listing.writable %}
+  <button type="submit" class="small secondary" formaction="/ui/files/move">Move…</button>
+  <button type="submit" class="small secondary" formaction="/ui/files/delete">Delete…</button>
+  {% endif %}
+</div>
+</form>
+{% if listing.truncated %}<p class="warning">This folder has more entries than can be shown at once.</p>{% endif %}
+{% else %}
+<p>This folder is empty.</p>
+{% endif %}
+{% endblock %}

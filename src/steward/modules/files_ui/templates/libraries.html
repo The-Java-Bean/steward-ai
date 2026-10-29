@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Files{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+<h1>Files</h1>
+{% include "files_ui/_nav.html" %}
+{% if libraries %}
+<ul class="libraries">
+  {% for lib in libraries %}<li><a href="/ui/files?path={{ lib.path|urlencode }}">{{ lib.name }}</a> <span class="hint">({{ lib.library_id }})</span></li>{% endfor %}
+</ul>
+{% else %}
+<p>No libraries yet. Add one in the setup wizard or with <code>steward folders import</code>.</p>
+{% endif %}
+{% endblock %}

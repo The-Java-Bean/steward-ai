@@ -7,6 +7,16 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- File manager (`files_ui`, the first built-in module, on by default) at `/ui/files`:
+  browse by folder or by kind, previews (images, PDF, text, audio, video), downloads
+  with byte ranges, folders and selections as streamed zips, new folder, rename, move
+  (folder picker), delete to the trash (asks for the password), Undo right after each
+  change. Search results link into it.
+- SDK web services for module pages (`steward.sdk.web`, ADR 0017): `WebDep` /
+  `Web` (render module templates in the core layout, re-auth), `Files` (scoped
+  listings and reads, `normal` or `locked`), `Actions` (run, run_all, undo through the
+  executor); `ui_page(templates=, static=)`, `link_builder`, `NotFound`; `ActionFailed`
+  is now part of the SDK.
 - Configuration: `steward.yaml`, `modules.yaml`, `pipeline.yaml` (all optional, unknown
   keys rejected, `config_version`), annotated examples in `config/`.
 - Databases: `state.db` and `index.db` (SQLite WAL), per-owner Alembic migrations with
@@ -112,6 +122,8 @@ All notable changes to steward-ai are recorded here. The format follows
   allow-list, generated `THIRD_PARTY_NOTICES.md`.
 
 ### Changed
+- The page Content-Security-Policy also allows same-origin media, frames (PDF
+  previews) and `fetch`; `base.html` has a `head` block for module stylesheets.
 - `deploy/compose.example.yaml` runs `steward api` with a health check; the worker
   starts once the API is healthy (databases migrated).
 - Registered names must start with the module's name (`<module>.<name>`); `core` and

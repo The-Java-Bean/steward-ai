@@ -1,0 +1,4 @@
+<nav class="files-tabs" aria-label="Browse">
+  <a href="/ui/files?path={{ (libraries[0].path if libraries|length == 1 else '')|urlencode }}"{% if not kind %} aria-current="page"{% endif %}>Folders</a>
+  {% for k, title in kinds %}<a href="/ui/files?kind={{ k }}"{% if kind == k %} aria-current="page"{% endif %}>{{ title }}</a>{% endfor %}
+</nav>

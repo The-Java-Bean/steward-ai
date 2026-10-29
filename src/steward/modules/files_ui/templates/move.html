@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Move{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+<h1>Move {{ entries|length }} item{{ '' if entries|length == 1 else 's' }}</h1>
+<ul class="selection">{% for e in entries %}<li>{{ e.name }}{% if e.kind == 'dir' %}/{% endif %}</li>{% endfor %}</ul>
+{% set keep %}{% for p in selected %}&amp;path={{ p|urlencode }}{% endfor %}{% endset %}
+<h2>To</h2>
+{% if libraries|length > 1 %}<p class="hint">Libraries: {% for lib in libraries %}<a href="/ui/files/move?to={{ lib.path|urlencode }}{{ keep }}">{{ lib.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+<p class="crumbs">{% for c in listing.crumbs %}<a href="/ui/files/move?to={{ c.path|urlencode }}{{ keep }}">{{ c.name }}</a> / {% endfor %}<strong>{{ listing.name }}</strong></p>
+<ul class="folders">
+  {% for e in listing.folders %}<li><a href="/ui/files/move?to={{ e.path|urlencode }}{{ keep }}">{{ e.name }}/</a></li>{% else %}<li class="hint">No folders inside.</li>{% endfor %}
+</ul>
+{% if moving_into_itself %}
+<p class="warning">A folder can't be moved into itself. Pick another folder.</p>
+{% elif not listing.writable %}
+<p class="warning">This folder is read-only.</p>
+{% else %}
+<form method="post" action="/ui/files/move">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="to" value="{{ listing.path }}">
+  {% for p in selected %}<input type="hidden" name="path" value="{{ p }}">{% endfor %}
+  <button type="submit">Move here ({{ listing.name }})</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Not everything worked{% endblock %}
+{% block content %}
+<h1>Not everything worked</h1>
+{% if done %}<p class="notice">{{ done }} item(s) done.</p>{% endif %}
+<ul class="error-list">{% for e in errors %}<li class="error">{{ e }}</li>{% endfor %}</ul>
+{% if undo %}
+<form method="post" action="/ui/files/undo" class="inline">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="entries" value="{{ undo }}">
+  <input type="hidden" name="back" value="{{ folder }}">
+  <button type="submit" class="small secondary">Undo what was done</button>
+</form>
+{% endif %}
+<p><a href="{{ back if back.startswith('/') else '/ui/files?path=' ~ (back|urlencode) }}">Back</a></p>
+{% endblock %}

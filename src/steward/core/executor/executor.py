@@ -41,7 +41,15 @@ from steward.core.folders import store as folder_store
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import Policy
 from steward.core.folders.store import load_policy
-from steward.sdk import ActionRefused, ActionType, Applied, PathState, Plan, Rendered
+from steward.sdk import (
+    ActionFailed,
+    ActionRefused,
+    ActionType,
+    Applied,
+    PathState,
+    Plan,
+    Rendered,
+)
 
 log = logging.getLogger(__name__)
 
@@ -51,11 +59,6 @@ SCAN_PRIORITY = 20
 
 class SensitiveActionError(ActionRefused):
     """The action is sensitive and the caller didn't confirm a recent password check."""
-
-
-class ActionFailed(Exception):
-    """The action failed while applying (an OS error). The journal has no entry; files
-    may be partly changed (an edit's backup copy, for example)."""
 
 
 @dataclass(frozen=True, slots=True)

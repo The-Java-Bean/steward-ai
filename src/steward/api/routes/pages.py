@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from steward.api.routes.api_v1 import LOCKED_SUMMARY
 from steward.api.security import api_state, require_principal
 from steward.api.templating import redirect, render
+from steward.api.web import first_link
 from steward.core import queue, settings
 from steward.core.db import utcnow
 from steward.core.executor import ActionFailed, SensitiveActionError
@@ -62,6 +63,8 @@ def search_page(
         "results": None,
         "page": page,
         "per_page": 50,
+        "link": lambda path: first_link(request, path, "file"),
+        "folder_link": lambda path: first_link(request, path, "dir"),
     }
     if q.strip() or kind:
         try:

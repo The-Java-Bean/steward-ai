@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Request
@@ -31,11 +32,13 @@ from steward.api.security import (
     guard,
     safe_next,
 )
-from steward.api.templating import NavEntry, redirect, render
+from steward.api.templating import NavEntry, make_templates, redirect, render
+from steward.api.web import PageInfo, make_web
 from steward.core.auth import AuthError, LockedOut, NotAllowed, ReauthRequired
 from steward.core.loader import ModuleLoadError
 from steward.core.runtime import Runtime
 from steward.core.setup import SetupToken
+from steward.sdk.web import NotFound
 from steward.ui import STATIC_DIR
 
 CORE_UI_PATHS = frozenset(
@@ -52,9 +55,12 @@ CORE_UI_PATHS = frozenset(
 """Paths the core uses or will use; module pages can't take them."""
 
 CONTENT_SECURITY_POLICY = (
-    "default-src 'none'; style-src 'self'; img-src 'self' data:; script-src 'self'; "
-    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+    "default-src 'none'; style-src 'self'; img-src 'self' data:; media-src 'self'; "
+    "frame-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'"
 )
+MODULE_STATIC = "/static/m"
+"""Module static files are served at `/static/m/<module>/`."""
 
 
 class UiPageError(ModuleLoadError):
@@ -97,6 +103,8 @@ def create_app(runtime: Runtime, *, setup_token: SetupToken | None = None) -> Fa
         ]
     )
     app.state.nav = nav
+    app.state.steward_web = make_web
+    app.state.link_builders = list(runtime.registrations.link_builders().values())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     _check_routes(app)
     _add_handlers(app)
@@ -107,7 +115,11 @@ def create_app(runtime: Runtime, *, setup_token: SetupToken | None = None) -> Fa
 def _mount_module_pages(app: FastAPI, runtime: Runtime) -> list[NavEntry]:
     entries: list[NavEntry] = []
     used: dict[str, str] = {}
+    templates: dict[str, Path] = {}
+    static: dict[str, Path] = {}
+    pages: list[PageInfo] = []
     for name, page in runtime.registrations.ui_pages().items():
+        module = runtime.registrations.module_of("ui_page", name)
         if page.path in CORE_UI_PATHS:
             raise UiPageError(f"UI page {name!r}: {page.path} is reserved for the core")
         if page.path in used:
@@ -121,10 +133,27 @@ def _mount_module_pages(app: FastAPI, runtime: Runtime) -> list[NavEntry]:
                     f"UI page {name!r}: only regular HTTP routes are allowed "
                     f"(found {type(route).__name__})"
                 )
+        for label, found, directory in (
+            ("templates", templates, page.templates),
+            ("static", static, page.static),
+        ):
+            if directory is None:
+                continue
+            if found.setdefault(module, directory) != directory:
+                raise UiPageError(f"UI page {name!r}: module {module!r} has two {label} folders")
         used[page.path] = name
         app.include_router(page.router, prefix=page.path)
+        pages.append(PageInfo(module, page.path, False, False))
         if page.nav:
             entries.append(NavEntry(page.path, page.title))
+    app.state.module_pages = sorted(
+        (PageInfo(p.module, p.path, p.module in templates, p.module in static) for p in pages),
+        key=lambda p: len(p.path),
+        reverse=True,
+    )
+    app.state.templates = make_templates(templates)
+    for module, directory in static.items():
+        app.mount(f"{MODULE_STATIC}/{module}", StaticFiles(directory=directory))
     return entries
 
 
@@ -132,7 +161,11 @@ def _check_routes(app: FastAPI) -> None:
     """Fail closed: every route must be one the guard dependency runs for."""
     for context in iter_route_contexts(app.routes):
         route = context.original_route
-        if isinstance(route, APIRoute) or (isinstance(route, Mount) and route.path == "/static"):
+        if isinstance(route, APIRoute):
+            continue
+        if isinstance(route, Mount) and (
+            route.path == "/static" or route.path.startswith(MODULE_STATIC + "/")
+        ):
             continue
         raise UiPageError(f"route {getattr(route, 'path', route)!r} would bypass the login check")
 
@@ -211,6 +244,9 @@ def _add_handlers(app: FastAPI) -> None:
     async def invalid(request: Request, exc: Exception) -> Response:
         return _error(request, 400, "Some fields are missing or invalid.")
 
+    async def not_found(request: Request, exc: Exception) -> Response:
+        return _error(request, 404, "Not found.")
+
     app.add_exception_handler(NeedLogin, need_login)
     app.add_exception_handler(SetupRequired, setup_required)
     app.add_exception_handler(SetupClosed, setup_closed)
@@ -221,6 +257,7 @@ def _add_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthError, auth_error)
     app.add_exception_handler(StarletteHTTPException, http_error)
     app.add_exception_handler(RequestValidationError, invalid)
+    app.add_exception_handler(NotFound, not_found)
 
 
 async def _security_headers(

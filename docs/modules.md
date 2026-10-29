@@ -85,7 +85,8 @@ Every name a module registers is the module's name or starts with `<module>.`
 | `schedule(name, Every(...) \| Daily(...), job=..., payload=...)` | a recurring job; owners can re-time or turn it off in `pipeline.yaml` |
 | `stage(name, run, version=, produces=, requires=, lane=, applies_to=, default=, index=)` | a pipeline stage; see "Stages" below |
 | `migrations(path, database="state" \| "index")` | a directory of Alembic revisions creating `<module>_*` tables |
-| `ui_page(name, router, path=, title=, nav=True)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`); see "UI pages" below |
+| `ui_page(name, router, path=, title=, nav=True, templates=, static=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; see "UI pages" below |
+| `link_builder(name, fn)` | `fn("library:path", "file" \| "dir") -> url \| None`: how to link to a file or folder in your pages (core pages such as search use the first one) |
 | `action(ActionType)` | a kind of file change, run only by the executor; see "Actions" below |
 | `exporter(fn)` | `fn(conn) -> {"<module>_table": [row dicts]}`: the module's irreplaceable data for `steward export` and backups |
 | `config_as(Model)` | (not a registration) the module's validated settings, typed |
@@ -224,6 +225,64 @@ r.ui_page("notes.page", page, path="/ui/notes", title="Notes")
 - Pages are served with a strict Content-Security-Policy: no inline `<script>` or
   `style=""`. Escape anything you put into HTML (`html.escape`).
 - Disabling the module removes the page and its navigation entry.
+
+### Web services (`steward.sdk.web`)
+Ask for the per-request `Web` handle with the `WebDep` dependency
+([ADR 0017](adr/0017-module-web-services.md)):
+
+```python
+from pathlib import Path
+
+from fastapi import APIRouter, Form
+from fastapi.responses import Response
+
+from steward.sdk import ActionRefused, WebDep
+
+page = APIRouter()
+
+
+@page.get("")
+def folder(web: WebDep, path: str) -> Response:
+    listing = web.files.listing(path)  # NotFound (404) for locked/hidden paths
+    return web.render("folder.html", {"listing": listing})
+
+
+@page.post("/mkdir")
+def mkdir(web: WebDep, path: str = Form()) -> Response:
+    try:
+        web.actions.run("file.mkdir", {"path": path})  # journaled, as the owner
+    except ActionRefused as exc:
+        return web.render("folder.html", {"error": str(exc)}, status=409)
+    return web.redirect("/ui/notes")
+
+
+here = Path(__file__).parent
+r.ui_page(
+    "notes.page",
+    page,
+    path="/ui/notes",
+    title="Notes",
+    templates=here / "templates",
+    static=here / "static",
+)
+```
+
+- `web.render(name, context)` renders `templates/<name>`; templates may
+  `{% extends "base.html" %}` and fill `title`, `head` and `content`; `notice` and
+  `error` in the context show as messages; `form_token` is the CSRF token for forms and
+  `static_url` is `/static/m/<module>`. Static files are public: never put anything
+  private there.
+- `web.files`: `libraries()`, `listing(path)`, `entry(path)`, `by_kind(kind)`,
+  `read_text(path, max_bytes=)`, `file_response(path, inline=)` (byte ranges, sandboxed),
+  `zip_response(paths, name=)` (streamed). Every call takes `scope="normal"` (default:
+  locked, hidden and trash folders don't exist) or `scope="locked"` (only inside locked
+  folders; asks for the password first).
+- `web.actions`: `preview`, `run`, `run_all` (one password check for a whole selection),
+  `undo`. Sensitive actions send the browser to the password page by themselves.
+- `web.viewer`, `web.recently_authenticated()`, `web.require_reauth()`, `web.redirect(url)`
+  (same-site paths only).
+- Raw `Response`s you build yourself get the page CSP; never serve file content that
+  way, use `file_response`.
 
 ## Loader errors
 

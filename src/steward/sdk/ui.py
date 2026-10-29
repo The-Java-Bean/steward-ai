@@ -6,12 +6,15 @@ A module registers a FastAPI `APIRouter` under a path below `/ui/`. The core mou
 behind the same checks as its own pages: a logged-in browser session is required (API
 tokens can't open UI pages), and every POST/PUT/PATCH/DELETE must carry the session's
 CSRF token (form field `csrf_token` or header `X-CSRF-Token`). Modules can't opt out.
+Routes use `steward.sdk.web` (the `WebDep` dependency) to render templates inside the
+core layout, read files and run actions.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,3 +32,9 @@ class UiPage:
     """Shown in the navigation."""
     nav: bool = True
     """Whether the page gets a navigation entry."""
+    templates: Path | None = None
+    """The module's Jinja2 templates (rendered with `Web.render`; they may extend the
+    core's `base.html`)."""
+    static: Path | None = None
+    """The module's static files, served publicly at `/static/m/<module>/` (scripts and
+    styles only; never anything private)."""

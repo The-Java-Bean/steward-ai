@@ -1,0 +1,8 @@
+{% if undo %}
+<form method="post" action="/ui/files/undo" class="undo-bar">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="entries" value="{{ undo }}">
+  <input type="hidden" name="back" value="{{ listing.path if listing else '' }}">
+  <button type="submit" class="small secondary">Undo</button>
+</form>
+{% endif %}

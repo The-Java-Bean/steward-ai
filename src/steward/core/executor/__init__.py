@@ -9,13 +9,13 @@ them; `actions` holds the core's own action types.
 from steward.core.executor.actions import BUILTIN_ACTIONS, MAX_TEXT_BYTES, register_actions
 from steward.core.executor.dirs import WRITE_LOCK, ExecutorError, create_folder
 from steward.core.executor.executor import (
-    ActionFailed,
     Executor,
     JournalEntry,
     Preview,
     SensitiveActionError,
 )
 from steward.core.executor.guarded import LOCKED_TRASH, TEMP_PREFIX, Guarded, ReadOnlyView
+from steward.sdk.actions import ActionFailed
 
 __all__ = [
     "BUILTIN_ACTIONS",

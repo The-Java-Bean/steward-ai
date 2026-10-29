@@ -4,18 +4,36 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 
 import steward
 from steward.api.security import PRESESSION_COOKIE, api_state
 from steward.ui import TEMPLATES_DIR
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+"""The core's own templates (used when an app has no `state.templates`)."""
+
+
+def make_templates(module_dirs: Mapping[str, Path]) -> Jinja2Templates:
+    """Core templates plus each module's, named `<module>/<template>` (they may extend
+    the core's `base.html`)."""
+    loader = ChoiceLoader(
+        [
+            FileSystemLoader(TEMPLATES_DIR),
+            PrefixLoader({m: FileSystemLoader(d) for m, d in module_dirs.items()}, delimiter="/"),
+        ]
+    )
+    env = Environment(loader=loader, autoescape=select_autoescape(default=True), auto_reload=False)
+    return Jinja2Templates(env=env)
+
 
 NOTICES = {
     "password_changed": "Your password was changed. Your other sessions were logged out.",
@@ -68,7 +86,8 @@ def render(
         "path": request.url.path,
         **(context or {}),
     }
-    response = templates.TemplateResponse(request, name, ctx, status_code=status, headers=headers)
+    found: Jinja2Templates = getattr(request.app.state, "templates", templates)
+    response = found.TemplateResponse(request, name, ctx, status_code=status, headers=headers)
     if getattr(request.state, "presession_new", False):
         set_cookie(request, response, PRESESSION_COOKIE, request.state.presession, max_age=None)
     return response

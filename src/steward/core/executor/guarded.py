@@ -422,6 +422,10 @@ class _Missing(Exception):
     """A folder on the way doesn't exist."""
 
 
+FolderMissing = _Missing
+"""Public name for readers outside the executor (`core.files`)."""
+
+
 @contextlib.contextmanager
 def open_dir(
     root: str,

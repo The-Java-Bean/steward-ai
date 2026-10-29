@@ -22,8 +22,9 @@ file managers) through optional integration modules, without requiring any of th
 ## For humans
 
 ### What it does *(planned)*
-- **File manager in the browser:** browse, preview, upload (large files, resumable),
-  download, move, rename and delete (to a trash folder, with undo).
+- **File manager in the browser** *(implemented, except uploads)*: browse, preview,
+  upload (large files, resumable; *planned*), download, move, rename and delete (to a
+  trash folder, with undo).
 - **Search:** keyword search over names and metadata; with an AI model connected, full
   text, OCR of scans, photo captions and meaning-based search.
 - **Tags:** automatic tagging from a vocabulary you control.
@@ -219,6 +220,19 @@ Key files, password databases, `.env` files and similar are excluded by default.
 model calls go through one gateway that enforces this; remote model servers aren't
 supported yet and are refused at startup.
 
+### File manager *(implemented; uploads come next)*
+**Files** (`/ui/files`) is your drive in the browser. Browse by folder, or by kind
+(images, videos, documents, …) across every library. Click a file to preview it
+(images, PDFs, text, audio and video play in the page) or download it; download a whole
+folder, or the files you tick, as one zip that starts right away however big it is.
+Make folders, rename, move (pick the destination folder) and delete; each change shows
+an **Undo** button, and everything is in the Journal. Deleting moves things to the
+trash and asks for your password (subject to your re-auth setting). Locked and hidden
+folders and the trash don't appear here (the Locked Folder view comes next), symlinks
+are never shown or followed, and search results link straight to their files. The
+file manager is a built-in module, `files_ui`; turn it off in `modules.yaml` with
+`files_ui: {enabled: false}`.
+
 ### Changes, undo, jobs and health *(implemented)*
 steward-ai changes files only through its executor: never overwriting, never following
 symlinks, deleting by moving to a trash folder (`.steward/trash` in each library unless
@@ -289,7 +303,10 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
-- **Phase 0 done. Phase 1 (core): all 6 chunks done; next is Phase 2** (1: config, databases and migrations, job queue, events, scheduler,
+- **Phase 2 (files, Locked Folder, shares) in progress: chunk 1 of 5 done** (module web
+  SDK + `files_ui` file manager, ADR 0017). Next: chunk 2 resumable uploads; then 3
+  Locked Folder, 4 `shares`, 5 acceptance + test environment.
+- **Phase 0 done. Phase 1 (core): all 6 chunks done** (1: config, databases and migrations, job queue, events, scheduler,
   worker; 2: libraries, folder types, mappings, locks, roles, folder identity; 3:
   discovery: scanner, watcher, hashing, file identity; 3b: stage SDK, graph, planner,
   stage jobs, ADR 0011; 4: auth service, ADR 0012; 5: `steward api`, HTTP auth layer,
@@ -297,7 +314,7 @@ steps, log). Read them first if present. A maintainer-only design document
   classification + model gateway (ADR 0015), executor/journal/undo + safety harness
   (ADR 0014), keyword search, `/api/v1`, `/ui/search|journal|jobs|health`,
   `/ui/settings/folders`, `steward backup|export` + pre-migration backups (ADR 0016)).
-- Not yet: `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
+- Not yet: uploads (Phase 2 chunk 2), the Locked Folder view (chunk 3), shares (chunk 4), a trash view in the file manager, `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
   step, remote model endpoints (`remote_llm` module), proposals/approval, htmx (no JS
   so far), libraries and roles editable in the UI (CLI only).
 
@@ -349,11 +366,11 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/search.py` | `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)`; raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `Visibility(policy)` (`is_hidden`, `is_locked`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
 | `src/steward/core/backup.py` | `backup(runtime, reason=, keep=)` → `BackupInfo` (online-backup copies of both DBs, `state.json`, `manifest.json`, `.partial-` then rename, 0600, prune), `export_state(runtime, strict=)` (`CORE_EXPORT_TABLES` minus secret columns + module exporters), `list_backups`, `latest_backup`, `prune`, `before_migrate(runtime)` (pending revision on existing DBs and no backup within `max_age_before_migrate_hours` → back up or raise `BackupError`) |
 | `src/steward/api/security.py` | The guard (app-wide dependency): `access(level)` decorator for core routes (`public`, `setup`, `session` default, `principal`), `level_of`, `ApiState(auth, api, trusted_proxies, setup_token)` (`has_owner` cached once true), `guard` (sets `request.state.principal/session_secret/csrf/presession/ip/https`), refusals `Refused(status, message)`, `NeedLogin`, `SetupRequired`, `SetupClosed`; `safe_next`, `is_https`; cookie names `steward_session`, `steward_setup`, `steward_presession` |
-| `src/steward/api/app.py` | `create_app(runtime, setup_token=)`: core routers, module pages (`UiPageError` for reserved/duplicate paths or non-`APIRoute` routes), `/static`, `_check_routes` (fail closed), exception handlers (login redirect / 401 JSON, `/setup` redirect / 503, re-auth redirect, 429 + `Retry-After`, HTML or JSON errors), security headers middleware; `CORE_UI_PATHS` |
-| `src/steward/api/templating.py` | `render(request, template, context, status=, headers=)` (adds `principal`, `csrf`, `form_token`, `nav`, `notice`; sets the pre-session cookie), `redirect` (303), `set_cookie`/`clear_cookie`, `NOTICES` (fixed `?notice=` messages), `NavEntry` |
+| `src/steward/api/app.py` | `create_app(runtime, setup_token=)`: core routers, module pages (`UiPageError` for reserved/duplicate paths, non-`APIRoute` routes or two templates/static dirs per module; module static at `/static/m/<module>` mounted before `/static`; sets `app.state.module_pages`, `templates`, `steward_web`, `link_builders`), `/static`, `NotFound` → 404, `_check_routes` (fail closed), exception handlers (login redirect / 401 JSON, `/setup` redirect / 503, re-auth redirect, 429 + `Retry-After`, HTML or JSON errors), security headers middleware; `CORE_UI_PATHS` |
+| `src/steward/api/templating.py` | `make_templates(module_dirs)` (per-app env: core templates + `PrefixLoader` `<module>/…`, stored as `app.state.templates`), `render(request, template, context, status=, headers=)` (adds `principal`, `csrf`, `form_token`, `nav`, `notice`; sets the pre-session cookie), `redirect` (303), `set_cookie`/`clear_cookie`, `NOTICES` (fixed `?notice=` messages), `NavEntry` |
 | `src/steward/api/routes/` | `auth.py` (`/login`, `/logout`, `/reauth`), `setup.py` (`/setup`, `/setup/owner`, `/setup/libraries|types|private|roles|done`; `next_page`, `progress_of`), `settings.py` (`/ui/settings` + POST `/password`, `/sessions/revoke`, `/sessions/revoke-others`, `/login`, `/tokens`, `/tokens/revoke`), `home.py` (`/` → `/ui/`, `/ui/`, `/health`, `/api/v1/me`), `pages.py` (`/ui/search`, `/ui/journal` + POST `/{id}/undo`, `/ui/jobs` + POST `/{id}/retry`, `/ui/health`, `/ui/settings/folders` + POST `/map`, `/unmap`, `/lock`; `run_health_checks(runtime)`), `api_v1.py` (see "API v1" below) |
 | `src/steward/api/server.py` | `serve(runtime)`: `backup.before_migrate`, `upgrade_databases`, setup token (logged as `setup token: …` while no owner), executor-lane `Worker` thread (`housekeeping=False`, id `api-…`), Uvicorn (`proxy_headers=False`, no access log, no server header) |
-| `src/steward/ui/` | `TEMPLATES_DIR` (Jinja2: `base.html`, `error.html`, `login.html`, `reauth.html`, `home.html`, `settings.html`, `search.html`, `journal.html`, `jobs.html`, `health.html`, `folders.html`, `setup/*.html`), `STATIC_DIR` (`steward.css`, light/dark). No JavaScript; CSP forbids inline scripts and styles |
+| `src/steward/ui/` | `TEMPLATES_DIR` (Jinja2: `base.html` (blocks `title`, `head`, `content`), `error.html`, `login.html`, `reauth.html`, `home.html`, `settings.html`, `search.html`, `journal.html`, `jobs.html`, `health.html`, `folders.html`, `setup/*.html`), `STATIC_DIR` (`steward.css`, light/dark). No JavaScript; CSP forbids inline scripts and styles |
 | `src/steward/core/auth/jobs.py` | `register_auth`: job + daily 04:30 schedule `core.auth.prune`, health check `core.auth` (`check_health`) |
 | `src/steward/core/settings.py` | `settings_kv` store: `get_all(conn, prefix)`, `set_value` (emits `settings.changed`, no-op if unchanged), `clear` |
 | `src/steward/core/logging.py` | JSON log formatter (`extra={"fields": {...}}`), logs exception type only |
@@ -363,7 +380,11 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/folders/store.py` | DB ops (emit events): `load_policy`, `upsert_library`, `ensure_folder`, `folder_id`, `move_folder`, `define_type`/`rename_type`/`delete_type`, `set_type`, `lock`/`unlock`/`clear_lock_override`, `set_role`/`clear_role`, `ensure_default_roles`; `FolderError`, `PermanentLockError` |
 | `src/steward/core/folders/seed.py` | `import_seed(conn, libraries=, folders=)` → `ImportReport`; additive, parents-first types |
 | `src/steward/core/loader/loader.py` | `discover()` (entry points, no imports), `resolve_enabled(choices)` (defaults: built-in features on, all else off), `load_modules(enabled, entry_points=None, core=None)` → `LoadedModules(modules, registrations)`; error classes, all subclasses of `ModuleLoadError` |
-| `src/steward/modules/` | Built-in modules go here (none yet) |
+| `src/steward/sdk/web.py` | Web services for module pages (ADR 0017): `WebDep` (FastAPI dependency → `get_web` → `app.state.steward_web`), protocols `Web` (`viewer`, `module`, `files`, `actions`, `csrf_token`, `static_url`, `render`, `redirect`, `recently_authenticated`, `require_reauth`), `Files` (`libraries`, `listing`, `entry`, `by_kind`, `read_text`, `file_response`, `zip_response`; `scope` `normal`/`locked`), `Actions` (`preview`, `run`, `run_all`, `undo`); dataclasses `Viewer`, `LibraryInfo`, `Crumb`, `Entry`, `FolderListing`, `KindPage`, `ActionPreview`, `ActionDone`, `StepOutcome`; `NotFound`; `LinkBuilder`, `Scope`, `EntryKind`. `ui_page(templates=, static=)` (`UiPage.templates/static`), `Registry.link_builder`, `Registrations.link_builders()`, `Registrations.module_of(point, name)` |
+| `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy)` (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `listing`, `entry`, `by_kind` (search with empty query), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
+| `src/steward/api/web.py` | The core's `Web` implementation: `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
+| `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.1.0 (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (page `files_ui.page` at `/ui/files` with `templates/` + `static/files.css`, link builder `files_ui.links`); `routes.py`: `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries or redirect to the only one; `did`/`n`/`undo` query → notice + Undo button), `GET /view`, `GET /raw` (`inline=1`), `GET /zip` (`path` repeated), `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker via `to=`), `GET|POST /delete` (confirm page, then `run_all`), `POST /undo` (`entries` comma list, `back`); templates `browse`, `kind`, `libraries`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo` |
+| `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
 | `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `search QUERY [--library --folder --kind --limit]`, `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
 | `examples/hello-module/` | Out-of-tree module `hello` 0.3.0 (dist `steward-hello`): config `greeting`; registers health check `hello`, stage `hello.lines` (text files ≤10 MiB → `hello_line_counts` in `index.db`, migration `migrations/index/0001`), subscriber `hello.greet` (`file.discovered`, logs), UI page `hello.page` at `/ui/hello`. Dev dependency only; not in the image |
@@ -380,7 +401,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/executor_support.py`, `tests/executor/test_action_safety.py`, `tests/integration/test_executor.py` | `ExecEnv` (runtime + library + scan/map/lock helpers), `build_tree`, `snapshot`; the safety harness parametrized over every registered action's `examples` (`NO_EXAMPLES = {"folder.unlock"}`); executor flows (trash, locked trash, edits, journal, events, identities) |
 | `tests/privacy/test_privacy_suite.py`, `tests/unit/test_privacy_rules.py` | Gateway with a fake transport: every plan §9.6 case, log scan for content, trust/remote config errors, only `core.llm` uses `urllib`/`openai`; rule matching |
 | `tests/integration/test_search.py`, `test_backup.py`, `test_api_v1.py` | Search on two layouts (hidden/locked/trash excluded, filters, Unicode); backups, prune, export contents, pre-migrate backup; `/api/v1` and the new UI pages (tokens never see locked folders or change anything, session actions + undo, journal redaction, OpenAPI, folder unlock re-auth) |
-| `docs/adr/` | ADRs 0001–0016, index, template |
+| `docs/adr/` | ADRs 0001–0017, index, template |
 | `docs/modules.md` | Module authoring guide |
 | `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | Keep a Changelog; generated by `make notices` |
 
@@ -563,6 +584,34 @@ steps, log). Read them first if present. A maintainer-only design document
   `upgrade_databases`; `core.backup` is registered by `register_backup` after modules
   so its job sees every exporter (it uses the built runtime via a closure).
 
+### Module web services and the file manager (implemented; ADR 0017)
+- Built-in modules (`src/steward/modules/`) obey the same import contract as
+  out-of-tree ones: only `steward.sdk`. Everything they need from the core comes
+  through `WebDep` (per request) or `Registry`.
+- The scope rule is `Browser.visible`: `normal` = not `Visibility.is_hidden` (locked,
+  `visible: false`, trash type, copy-holding roles, `.steward`) and not a
+  `.steward-tmp-*` name; `locked` = `Visibility.is_locked`. Invisible → `NotFound` → 404
+  (HTML or JSON by path prefix). `WebFiles.check_scope("locked")` passes if `is_recent`,
+  else calls `require_recent_auth` (→ `ReauthRequired` → `/reauth?next=` redirect).
+- Paths in the file manager are `library:relpath` exactly as on disk (`split_path` +
+  `check_segments`, no NFC normalization). Reads use `open_dir` (`O_NOFOLLOW` per
+  component); `FolderMissing` is the public alias of guarded's `_Missing`.
+- Module templates are addressed as `<module>/<name>` (`WebHandle.render` adds the
+  prefix and `static_url`). Partials inside a module template are included by full
+  name (`{% include "files_ui/_nav.html" %}`).
+- Messages after redirects in `files_ui` come from its fixed `DONE` map
+  (`?did=<key>&n=<count>`); `undo=<ids>` only feeds the Undo form (undo by ID is
+  already allowed from `/ui/journal`).
+- Bulk changes use `Actions.run_all`: preview every step, one `require_recent_auth`
+  if any is sensitive, then run each with `confirmed=True`; per-step errors are listed
+  on `errors.html` with an "Undo what was done" button.
+- The security suite (`test_api_security.py`) loads `FilesUiModule`, so its routes are
+  checked for anonymous refusal, CSRF and token refusal like core routes.
+- Tests that need the module pass it explicitly (`make_runtime(tmp_path,
+  (FilesUiModule,))`); test runtimes only load modules given as fake entry points, so
+  `files_ui` is absent elsewhere. Real installs find it through its entry point
+  (`uv sync` after changing entry points).
+
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
   version tables `alembic_version_<owner>`.
@@ -675,7 +724,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 0. ~~Foundation: repo skeleton, SDK `Module`/`Registry`, module loader, ADRs, license.~~ Done.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
-2. File manager, Locked Folder, built-in shares.
+2. File manager, Locked Folder, built-in shares *(in progress: chunk 1 of 5 done — module web SDK + `files_ui`)*.
 3. Indexing and tagging (documents, search, fields, tags, photos).
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).

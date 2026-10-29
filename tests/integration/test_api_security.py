@@ -26,6 +26,7 @@ from steward.api import create_app
 from steward.api.security import SAFE_METHODS, level_of
 from steward.core.runtime import Runtime
 from steward.core.setup import SetupToken
+from steward.modules.files_ui import FilesUiModule
 from steward.sdk import Registry
 
 PUBLIC = {
@@ -80,7 +81,7 @@ def fast_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def runtime(tmp_path: Path) -> Iterator[Runtime]:
-    rt = make_runtime(tmp_path, (HelloModule, _posting_module()))
+    rt = make_runtime(tmp_path, (HelloModule, FilesUiModule, _posting_module()))
     yield rt
     rt.close()
 
@@ -106,6 +107,7 @@ def _routes(app: FastAPI) -> list[tuple[str, str, object]]:
 def test_the_route_list_includes_module_pages(app: FastAPI) -> None:
     paths = {path for _, path, _ in _routes(app)}
     assert {"/ui/hello", "/ui/poster", "/ui/poster/act", "/ui/settings"} <= paths
+    assert {"/ui/files", "/ui/files/raw", "/ui/files/move", "/ui/files/delete"} <= paths
 
 
 def test_only_the_listed_routes_are_public(app: FastAPI) -> None:

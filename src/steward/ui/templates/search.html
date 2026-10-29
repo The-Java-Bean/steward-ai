@@ -30,8 +30,10 @@
   <tbody>
   {% for h in results.hits %}
     <tr>
-      <td>{{ h.name }}</td>
-      <td><code>{{ h.library_id }}:{{ h.folder }}</code></td>
+      {% set href = link(h.library_id ~ ':' ~ h.relpath) %}
+      {% set folder_href = folder_link(h.library_id ~ ':' ~ h.folder) %}
+      <td>{% if href %}<a href="{{ href }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+      <td>{% if folder_href %}<a href="{{ folder_href }}"><code>{{ h.library_id }}:{{ h.folder }}</code></a>{% else %}<code>{{ h.library_id }}:{{ h.folder }}</code>{% endif %}</td>
       <td>{{ h.kind or '' }}</td>
       <td>{{ h.size|filesizeformat }}</td>
       <td>{{ h.modified.strftime('%Y-%m-%d') }}</td>

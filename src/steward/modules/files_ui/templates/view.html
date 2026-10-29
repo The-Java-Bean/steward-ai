@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/ui/files?path={{ folder|urlencode }}">← {{ folder }}</a></p>
+<h1 class="filename">{{ entry.name }}</h1>
+<p class="hint">{{ entry.mime or 'unknown type' }} · {{ entry.size|filesizeformat }}{% if entry.modified %} · modified {{ entry.modified.strftime('%Y-%m-%d %H:%M') }}{% endif %}</p>
+<div class="toolbar">
+  <a class="button small" href="/ui/files/raw?path={{ entry.path|urlencode }}">Download</a>
+  {% if preview in ('image', 'pdf', 'video', 'audio', 'text') %}<a class="button small secondary" href="/ui/files/raw?path={{ entry.path|urlencode }}&amp;inline=1" target="_blank" rel="noopener">Open in a new tab</a>{% endif %}
+  <a class="button small secondary" href="/ui/files/rename?path={{ entry.path|urlencode }}">Rename</a>
+  <a class="button small secondary" href="/ui/files/move?path={{ entry.path|urlencode }}">Move…</a>
+  <a class="button small secondary" href="/ui/files/delete?path={{ entry.path|urlencode }}">Delete…</a>
+</div>
+{% set src = '/ui/files/raw?inline=1&path=' ~ (entry.path|urlencode) %}
+<div class="preview">
+{% if preview == 'image' %}
+  <img src="{{ src }}" alt="{{ entry.name }}">
+{% elif preview == 'video' %}
+  <video src="{{ src }}" controls preload="metadata"></video>
+{% elif preview == 'audio' %}
+  <audio src="{{ src }}" controls preload="metadata"></audio>
+{% elif preview == 'pdf' %}
+  <iframe src="{{ src }}" title="{{ entry.name }}"></iframe>
+{% elif preview == 'text' %}
+  <pre class="text">{{ text }}</pre>
+  {% if cut %}<p class="hint">Only the beginning is shown. Download the file to see all of it.</p>{% endif %}
+{% else %}
+  <p class="hint">No preview for this kind of file.</p>
+{% endif %}
+</div>
+{% endblock %}

@@ -24,8 +24,9 @@ dependencies = [
 [project.scripts]
 steward = "steward.cli:app"
 
-# Built-in modules will be listed under [project.entry-points."steward.modules"],
-# registered exactly like out-of-tree ones (see docs/modules.md). None exist yet.
+# Built-in modules are registered exactly like out-of-tree ones (see docs/modules.md).
+[project.entry-points."steward.modules"]
+files_ui = "steward.modules.files_ui:FilesUiModule"
 
 [dependency-groups]
 dev = [

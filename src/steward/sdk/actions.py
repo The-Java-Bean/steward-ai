@@ -52,6 +52,11 @@ class ActionRefused(Exception):
     met...). Nothing was changed."""
 
 
+class ActionFailed(Exception):
+    """The action failed while applying (an OS error). The journal has no entry; files
+    may be partly changed (an edit's backup copy, for example)."""
+
+
 @dataclass(frozen=True, slots=True)
 class PathState:
     """What is (or must be) at a path. `size`/`mtime_ns`/`content_hash` of None mean

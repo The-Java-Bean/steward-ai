@@ -29,6 +29,7 @@ from steward.sdk.module import ModuleConfig
 from steward.sdk.schedules import When
 from steward.sdk.stages import ARTIFACT_PATTERN, AppliesTo, Stage, StageRunner, _always
 from steward.sdk.ui import UI_PATH_PATTERN, UiPage
+from steward.sdk.web import LinkBuilder
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
@@ -105,6 +106,9 @@ class Registrations:
     def at(self, point: str) -> list[Registration]:
         return [e for e in self._entries.values() if e.point == point]
 
+    def module_of(self, point: str, name: str) -> str:
+        return self._entries[(point, name)].module
+
     def by_module(self, module: str) -> list[Registration]:
         return [e for e in self._entries.values() if e.module == module]
 
@@ -133,6 +137,9 @@ class Registrations:
 
     def ui_pages(self) -> dict[str, UiPage]:
         return {e.name: cast(UiPage, e.item) for e in self.at("ui_page")}
+
+    def link_builders(self) -> dict[str, LinkBuilder]:
+        return {e.name: cast(LinkBuilder, e.item) for e in self.at("link_builder")}
 
     def migrations(self, database: Database) -> dict[str, Path]:
         """Owner (`core` or a module name) -> directory of Alembic revision files."""
@@ -254,16 +261,34 @@ class Registry:
         self._add(f"migrations:{database}", self._module, path)
 
     def ui_page(
-        self, name: str, router: APIRouter, *, path: str, title: str, nav: bool = True
+        self,
+        name: str,
+        router: APIRouter,
+        *,
+        path: str,
+        title: str,
+        nav: bool = True,
+        templates: Path | None = None,
+        static: Path | None = None,
     ) -> None:
         """Register a web UI page: `router` is mounted at `path` (`/ui/<slug>`), behind
-        login and CSRF checks the module can't turn off (see `steward.sdk.ui`)."""
+        login and CSRF checks the module can't turn off (see `steward.sdk.ui`).
+        `templates` and `static` are directories (see `UiPage`); a module's pages share
+        one of each."""
         if not UI_PATH_PATTERN.match(path):
             raise ValueError(f"UI page path {path!r} must look like /ui/<lowercase-slug>")
         title = title.strip()
         if not title:
             raise ValueError("a UI page needs a title")
-        self._add("ui_page", name, UiPage(path, router, title, nav))
+        for label, directory in (("templates", templates), ("static", static)):
+            if directory is not None and not Path(directory).is_dir():
+                raise ValueError(f"UI page {name!r}: {label} {directory} isn't a directory")
+        self._add("ui_page", name, UiPage(path, router, title, nav, templates, static))
+
+    def link_builder(self, name: str, builder: LinkBuilder) -> None:
+        """Register how to link to a file or folder (`library:path`) in this module's
+        pages; the core's pages (search results, for example) use the first one."""
+        self._add("link_builder", name, builder)
 
     def action(self, action_type: ActionType) -> None:
         """Register an action type (see `steward.sdk.actions`). Its name is
