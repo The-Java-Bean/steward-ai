@@ -1,0 +1,1 @@
+{% if row.name is none %}<em>{{ hidden_name or 'An item in a locked or hidden folder' }}</em>{% elif row.item_href %}<a href="{{ row.item_href }}">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}{% if row.share.kind == 'dir' and row.name is not none %} <span class="hint">(folder{% if row.share.snapshot %}, snapshot{% endif %})</span>{% endif %}

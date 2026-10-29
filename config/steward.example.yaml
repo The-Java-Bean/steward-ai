@@ -37,6 +37,9 @@ api:
   # Mark cookies Secure: auto (when the request came over HTTPS, directly or from a
   # trusted proxy sending X-Forwarded-Proto: https), always or never.
   secure_cookies: auto
+  # The address people outside use, for share links (https://files.example.com, no
+  # trailing slash). Unset: the address each request came to.
+  # public_url: https://files.example.com
 
 setup:
   # The setup wizard suggests every folder inside these as a library.

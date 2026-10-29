@@ -20,6 +20,7 @@
   </form>
   {% endif %}
   <a class="button small secondary" href="{{ base }}/zip?path={{ listing.path|urlencode }}">Download folder (zip)</a>
+  {% if shares and listing.shareable and listing.relpath %}<a class="button small secondary" href="{{ shares }}/new?path={{ listing.path|urlencode }}">Share folder…</a>{% endif %}
   {% if scope == 'normal' and listing.relpath %}
   <a class="button small secondary" href="{{ base }}/lock?path={{ listing.path|urlencode }}">Lock folder…</a>
   {% elif scope == 'locked' and listing.lock_from == listing.path and not listing.permanent %}
@@ -58,6 +59,7 @@
       <td class="row-actions">
         {% if e.kind == 'file' %}<a href="{{ base }}/raw?path={{ e.path|urlencode }}">Download</a>{% endif %}
         {% if listing.writable %}<a href="{{ base }}/rename?path={{ e.path|urlencode }}">Rename</a>{% endif %}
+        {% if shares and listing.shareable %}<a href="{{ shares }}/new?path={{ e.path|urlencode }}">Share</a>{% endif %}
       </td>
     </tr>
   {% endfor %}

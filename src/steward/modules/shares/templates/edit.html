@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Change share{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/shares.css">{% endblock %}
+{% block content %}{% set s = row.share %}
+<p class="crumbs"><a href="/ui/shares">Shares</a> / <a href="/ui/shares/{{ s.share_id }}">Share</a></p>
+<h1>Change share</h1>
+<p>{% include "shares/_row_item.html" %}</p>
+<form method="post" action="/ui/shares/{{ s.share_id }}/edit">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <fieldset class="choices">
+    <legend>Expiry (now: {% if s.no_expiry %}none{% else %}{{ s.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %})</legend>
+    <label><input type="radio" name="expiry" value="keep" checked> Keep</label>
+    {% for days in presets %}
+    <label><input type="radio" name="expiry" value="{{ days }}"> {{ days }} day{{ '' if days == '1' else 's' }} from now</label>
+    {% endfor %}
+    <label><input type="radio" name="expiry" value="custom"> <input type="number" name="days" min="1" max="36500" aria-label="Number of days"> days from now</label>
+    <label><input type="radio" name="expiry" value="never"> No expiry</label>
+    <p class="warning">A link with no expiry keeps working until you revoke it. It asks for your password.</p>
+  </fieldset>
+  <fieldset class="choices">
+    <legend>Password (now: {{ 'on' if s.has_password else 'off' }})</legend>
+    <label><input type="radio" name="password_change" value="keep" checked> Keep</label>
+    <label><input type="radio" name="password_change" value="set"> New password: <input name="new_password" minlength="{{ min_password }}" maxlength="1024" autocomplete="off" spellcheck="false" aria-label="New password"></label>
+    {% if s.has_password %}<label><input type="radio" name="password_change" value="remove"> No password</label>{% endif %}
+    <p class="hint">A new password ends access for everyone who entered the old one.</p>
+  </fieldset>
+  <p><button type="submit">Save</button> <a href="/ui/shares/{{ s.share_id }}">Cancel</a></p>
+</form>
+{% endblock %}

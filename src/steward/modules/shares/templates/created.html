@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Link created{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/shares.css"><script src="{{ static_url }}/shares.js" defer></script>{% endblock %}
+{% block content %}{% set s = row.share %}
+<h1>Link created</h1>
+<p>{% include "shares/_row_item.html" %}</p>
+{% include "shares/_link.html" %}
+{% if password %}
+<p>Password: <code class="secret">{{ password }}</code></p>
+<p class="hint">This is the only time the password is shown. Send it separately from the link.</p>
+{% else %}
+<p class="warning">Anyone with the link can open it: there is no password.</p>
+{% endif %}
+<p>{% if s.no_expiry %}<span class="no-expiry">This link never expires.</span> Revoke it when it isn't needed any more.{% else %}It works until {{ s.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC.{% endif %}</p>
+<div class="toolbar">
+  <a class="button small" href="/ui/shares/{{ s.share_id }}">Details</a>
+  <form method="post" action="/ui/shares/undo" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <input type="hidden" name="entry" value="{{ entry_id }}">
+    <button type="submit" class="small secondary">Undo</button>
+  </form>
+</div>
+{% endblock %}

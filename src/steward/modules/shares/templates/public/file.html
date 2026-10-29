@@ -1,0 +1,23 @@
+{% extends "public.html" %}
+{% block title %}{{ entry.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/m/shares/shares.css">{% endblock %}
+{% block content %}
+{% if back %}<p class="crumbs"><a href="{{ back }}">← Back to the folder</a></p>{% endif %}
+<h1 class="filename">{{ entry.name }}</h1>
+<p class="hint">{{ entry.size|filesizeformat }}{% if entry.modified %} · modified {{ entry.modified.strftime('%Y-%m-%d') }}{% endif %}{% if expires_at %} · link works until {{ expires_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</p>
+<p><a class="button" href="{{ download }}">Download</a></p>
+<div class="preview">
+{% if preview == 'image' %}
+  <img src="{{ inline }}" alt="{{ entry.name }}">
+{% elif preview == 'video' %}
+  <video src="{{ inline }}" controls preload="metadata"></video>
+{% elif preview == 'audio' %}
+  <audio src="{{ inline }}" controls preload="metadata"></audio>
+{% elif preview == 'pdf' %}
+  <iframe src="{{ inline }}" title="{{ entry.name }}"></iframe>
+{% elif preview == 'text' %}
+  <pre class="text">{{ text }}</pre>
+  {% if cut %}<p class="hint">Only the beginning is shown. Download the file to see all of it.</p>{% endif %}
+{% endif %}
+</div>
+{% endblock %}

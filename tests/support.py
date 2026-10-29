@@ -111,8 +111,9 @@ def use_fast_hashes(monkeypatch: Any) -> None:
     from argon2 import PasswordHasher
 
     from steward.core.auth import passwords
+    from steward.modules.shares import credentials
 
-    monkeypatch.setattr(
-        passwords, "_hasher", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
-    )
+    cheap = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+    monkeypatch.setattr(passwords, "_hasher", cheap)
+    monkeypatch.setattr(credentials, "_hasher", cheap)
     passwords._dummy_hash.cache_clear()

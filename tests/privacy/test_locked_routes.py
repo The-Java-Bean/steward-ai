@@ -22,7 +22,9 @@ from locked_support import SECRET_CONTENT, SECRET_NAME, LockedEnv
 from support import use_fast_hashes
 
 from steward.api import create_app
+from steward.core.db import utcnow
 from steward.core.folders import FolderRef, load_policy
+from steward.modules.shares import store as shares_store
 
 LOCKED_PATHS = (
     "lib:vault",
@@ -61,6 +63,20 @@ def env(tmp_path: Path) -> Iterator[LockedEnv]:
     e.runtime.executor.run(
         "file.delete", {"path": f"lib:vault/inner/{SECRET_NAME}"}, actor="t", confirmed=True
     )
+    # A share made before its folder was locked (shares can't be made in locked folders).
+    with e.runtime.dbs.state.write() as conn:
+        shares_store.insert_share(
+            conn,
+            share_id="1" * 32,
+            token="T" * 22,
+            path=f"lib:private/{SECRET_NAME}",
+            kind="file",
+            password_hash=None,
+            expires_at=None,
+            snapshot_files=None,
+            actor="t",
+            now=utcnow(),
+        )
     e.scan()
     yield e
     e.runtime.close()
@@ -125,6 +141,9 @@ def _walk(client: TestClient, app: FastAPI, *, gets_only: bool = False) -> list[
                 else:
                     response = client.request(method, path, params=params, data=params)
                 body = response.text if response.status_code != 303 else ""
+                if path.startswith("/s/"):
+                    response = client.get("/s/" + "T" * 22)
+                    body += response.text
                 location = response.headers.get("location", "")
                 if _leaks(body) or SECRET_NAME in location:
                     leaks.append(f"{method} {path} {params['scope']} {locked}")

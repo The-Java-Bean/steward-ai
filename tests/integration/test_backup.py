@@ -16,6 +16,8 @@ from steward.core.config import load_config
 from steward.core.db import migrate
 from steward.core.folders import FolderRef, store
 from steward.core.runtime import build_runtime
+from steward.modules.files_ui import FilesUiModule
+from steward.modules.shares import SharesModule
 
 ACTOR = "user:1"
 
@@ -100,7 +102,8 @@ def test_a_backup_is_taken_before_migrating_existing_databases(tmp_path: Path) -
 
 
 def test_cli_backup_and_export(tmp_path: Path) -> None:
-    runtime = make_runtime(tmp_path)
+    # The CLI loads the installed built-in modules; `shares` has tables of its own.
+    runtime = make_runtime(tmp_path, (FilesUiModule, SharesModule))
     runtime.close()
     runner = CliRunner()
     config = str(tmp_path / "config")

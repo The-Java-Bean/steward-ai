@@ -84,6 +84,9 @@ class ApiConfig(_Strict):
     secure_cookies: Literal["auto", "always", "never"] = "auto"
     """`auto`: mark cookies `Secure` when the request came over HTTPS (directly, or from a
     trusted proxy that sent `X-Forwarded-Proto: https`)."""
+    public_url: str | None = Field(None, pattern=r"^https?://[^/\s?#]+(/[^\s?#]*[^/\s?#])?$")
+    """The address people outside use (`https://files.example.com`), for share links.
+    Unset: the address each request came to."""
 
 
 class SetupConfig(_Strict):

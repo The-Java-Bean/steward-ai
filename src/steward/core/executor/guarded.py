@@ -31,11 +31,12 @@ import secrets
 import stat
 import unicodedata
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from blake3 import blake3
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, func, select
 
 from steward.core.db import Database, utcnow
 from steward.core.db.schema import files
@@ -43,7 +44,9 @@ from steward.core.discovery.hashing import PREFIX
 from steward.core.folders import store as folder_store
 from steward.core.folders.paths import MAX_SEGMENT_BYTES, FolderRef, PathError, normalize_relpath
 from steward.core.folders.policy import Library, Policy
-from steward.sdk import ActionRefused, PathPolicy, PathState
+from steward.core.privacy.rules import PrivacyRules
+from steward.core.privacy.sharing import SharingRules
+from steward.sdk import ActionRefused, PathPolicy, PathPrivacy, PathState
 
 TEMP_PREFIX = ".steward-tmp-"
 UPLOAD_PREFIX = TEMP_PREFIX + "up-"
@@ -119,6 +122,7 @@ class ReadOnlyView:
     policy: Policy
     state_db: Database
     clock: Callable[[], datetime] = utcnow
+    rules: PrivacyRules = field(default_factory=PrivacyRules.default)
     _now: datetime | None = field(default=None, init=False)
 
     # --- paths ----------------------------------------------------------------------
@@ -166,6 +170,27 @@ class ReadOnlyView:
         target = self.target(path)
         is_dir = self.state(path).kind == "dir"
         return self.policy_of(target, folder=is_dir)
+
+    def privacy(self, path: str) -> PathPrivacy:
+        target = self.target(path)
+        with self.state_db.read() as conn:
+            sharing = SharingRules.load(conn, self.policy, self.rules)
+        return sharing.check(target.library.library_id, target.relpath)
+
+    def read_state(self) -> AbstractContextManager[Connection]:
+        return self.state_db.read()
+
+    def file_ids_in(self, path: str) -> list[str]:
+        target = self.target(path)
+        query = select(files.c.file_id).where(
+            files.c.library_id == target.library.library_id, files.c.present.is_(True)
+        )
+        if target.relpath:
+            # `substr` instead of LIKE: relpaths may contain `%` and `_`.
+            prefix = target.relpath + "/"
+            query = query.where(func.substr(files.c.relpath, 1, len(prefix)) == prefix)
+        with self.state_db.read() as conn:
+            return [str(r.file_id) for r in conn.execute(query)]
 
     # --- reading --------------------------------------------------------------------
 
@@ -241,8 +266,16 @@ class ReadOnlyView:
 class Guarded(ReadOnlyView):
     """The write handle for one `apply` (the SDK's `GuardedFS`)."""
 
-    def __init__(self, policy: Policy, state_db: Database, clock: Callable[[], datetime]) -> None:
-        super().__init__(policy, state_db, clock)
+    def __init__(
+        self,
+        policy: Policy,
+        state_db: Database,
+        clock: Callable[[], datetime],
+        rules: PrivacyRules | None = None,
+    ) -> None:
+        super().__init__(policy, state_db, clock, rules or PrivacyRules.default())
+        self.actor = "executor"
+        """Set by the executor to whoever runs the action."""
         self.db_ops: list[DbOp] = []
         self.allowed_writes: set[str] | None = None
         """When set (by the executor, from the plan), writes outside these paths and their
@@ -425,6 +458,9 @@ class Guarded(ReadOnlyView):
         self.db_ops.append(
             lambda conn: folder_store.set_type(conn, ref, type_name, actor="executor")
         )
+
+    def write_state(self, op: DbOp) -> None:
+        self.db_ops.append(op)
 
 
 # --- low-level helpers ----------------------------------------------------------------

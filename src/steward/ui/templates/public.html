@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Shared with you{% endblock %}</title>
+  <link rel="stylesheet" href="/static/steward.css">
+  {% block head %}{% endblock %}
+</head>
+<body class="public">
+  <header class="top"><span class="brand">{% block heading %}Shared with you{% endblock %}</span></header>
+  <main>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Shared with steward-ai</footer>
+</body>
+</html>

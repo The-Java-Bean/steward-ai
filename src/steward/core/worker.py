@@ -77,7 +77,7 @@ class Worker:
                 if not queue.renew(conn, job.job_id, worker_id=self.worker_id, lease=self.lease):
                     log.warning("lost the lease on a running job", extra={"fields": fields})
 
-        ctx = JobContext(job.job_id, job.type, job.payload, job.attempts, renew_lease)
+        ctx = JobContext(job.job_id, job.type, job.payload, job.attempts, renew_lease, state)
         try:
             self.job_types[job.type].handler(ctx)
         except Exception as exc:

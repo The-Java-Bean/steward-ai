@@ -85,7 +85,8 @@ Every name a module registers is the module's name or starts with `<module>.`
 | `schedule(name, Every(...) \| Daily(...), job=..., payload=...)` | a recurring job; owners can re-time or turn it off in `pipeline.yaml` |
 | `stage(name, run, version=, produces=, requires=, lane=, applies_to=, default=, index=)` | a pipeline stage; see "Stages" below |
 | `migrations(path, database="state" \| "index")` | a directory of Alembic revisions creating `<module>_*` tables |
-| `ui_page(name, router, path=, title=, nav=True, templates=, static=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; see "UI pages" below |
+| `ui_page(name, router, path=, title=, nav=True, templates=, static=, badge=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; `badge(state) -> int` puts a count next to its navigation entry; see "UI pages" below |
+| `share_links(handler)` | answer the public share links `/s/<token>…` (one module at most); see "Share links" below |
 | `link_builder(name, fn)` | `fn("library:path", "file" \| "dir") -> url \| None`: how to link to a file or folder in your pages (core pages such as search use the first one) |
 | `action(ActionType)` | a kind of file change, run only by the executor; see "Actions" below |
 | `exporter(fn)` | `fn(conn) -> {"<module>_table": [row dicts]}`: the module's irreplaceable data for `steward export` and backups |
@@ -126,6 +127,17 @@ order. **Migrations**: each module has its own Alembic history and version table
 ([ADR 0007](adr/0007-per-owner-migrations.md)); write revision files by hand in the
 module's `migrations/` directory with `revision`/`down_revision` like any Alembic
 script.
+
+## Module state
+
+A module with `migrations(..., database="state")` reads and writes its own `<module>_*`
+tables through a `StateAccess` handle (`steward.sdk.state`): `with state.read() as
+conn:` / `with state.write() as conn:` give SQLAlchemy connections. Handles come with
+each call: `JobContext.state`, `Web.state` (pages), `ShareRequest.state` (share links),
+`ReadOnlyFS.read_state()` (planning an action); an action's own row changes go through
+`GuardedFS.write_state(op)` so they commit with its journal entry. Store timestamps with
+`steward.sdk.UTCDateTime` (also in migration files) and get "now" from `utcnow()`.
+Never touch the core's tables.
 
 ## Stages
 
@@ -284,12 +296,31 @@ r.ui_page(
   folders, never their trash; asks for the password first). For the Locked Folder:
   `locked_folders()` (`LockedFolder`s to start from) and `unlock_preview(path)` (an
   `UnlockPreview`: what unlocking would make visible, or why it can't be unlocked).
+  `privacy(paths)` gives each path's `PathPrivacy` (hidden in normal views? shareable,
+  and why not?) without reading anything.
 - `web.actions`: `preview`, `run`, `run_all` (one password check for a whole selection),
   `undo`. Sensitive actions send the browser to the password page by themselves.
 - `web.viewer`, `web.recently_authenticated()`, `web.require_reauth()`, `web.redirect(url)`
-  (same-site paths only).
+  (same-site paths only), `web.state` (your tables), `web.page_url("<module>.page")`
+  (another module's page, or None if it isn't enabled), `web.link_to(path, kind)` (the
+  first link builder's link), `web.absolute_url("/path")` (a full URL for people
+  outside, from `api.public_url` when set).
 - Raw `Response`s you build yourself get the page CSP; never serve file content that
   way, use `file_response`.
+
+### Share links (`steward.sdk.shares`)
+
+The core owns `/s/<token>` and `/s/<token>/<path>`; a module registered with
+`share_links(handler)` answers them (the built-in `shares` module does). The handler
+gets a `ShareRequest` (token, `subpath`, `method`, `query`, `form`, `client_ip`,
+`user_agent`, `state`, `form_token`, `base_url`, `cookie()`, `set_cookie()`,
+`render()` with templates extending `public.html`, `redirect()`, `not_found()`) and
+calls `open("library:path", "file" | "dir", only_files=...)` for the item: the core
+refuses (`NotFound`) anything that may not be shared right now and confines the
+returned `SharedItem` (`entry`, `listing`, `read_text`, `file_response`,
+`zip_response`, all taking paths relative to the item) to what inside it may be shared.
+Use `ReadOnlyFS.privacy(path)` / `Files.privacy(paths)` (`PathPrivacy`) to check the
+same rule earlier, and keep secrets out of the journal with `Plan.transient`.
 
 ## Loader errors
 

@@ -31,6 +31,9 @@ from fastapi import Depends, Request
 if TYPE_CHECKING:
     from fastapi.responses import Response
 
+    from steward.sdk.actions import PathPrivacy
+    from steward.sdk.state import StateAccess
+
 Scope = Literal["normal", "locked"]
 """`normal`: what every view shows. `locked`: only inside locked folders (re-auth)."""
 
@@ -211,6 +214,12 @@ class Files(Protocol):
         """What unlocking the locked folder `path` would expose. Raises `NotFound`."""
         ...
 
+    def privacy(self, paths: Sequence[str]) -> dict[str, PathPrivacy]:
+        """The privacy class of each `library:path` (whether it's hidden in normal views,
+        whether it may be shared and why not). Works for paths that don't exist (the
+        folder rules still apply); unparseable paths come back hidden."""
+        ...
+
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:
         """The start of a file as text (invalid UTF-8 replaced) and whether it was cut."""
         ...
@@ -301,6 +310,25 @@ class Web(Protocol):
     @property
     def static_url(self) -> str:
         """Where the module's static files are served (`/static/m/<module>`)."""
+        ...
+
+    @property
+    def state(self) -> StateAccess:
+        """`state.db`, for the module's own tables (see `steward.sdk.state`)."""
+        ...
+
+    def page_url(self, name: str) -> str | None:
+        """Where the UI page registered as `name` is mounted, or None if no enabled
+        module registered it (to link to another module's page only when it exists)."""
+        ...
+
+    def link_to(self, path: str, kind: EntryKind) -> str | None:
+        """A link to a file or folder from the first registered link builder."""
+        ...
+
+    def absolute_url(self, path: str) -> str:
+        """`path` (starting with `/`) as a full URL for people outside: `api.public_url`
+        if the owner set it, else the address this request came to."""
         ...
 
     def render(

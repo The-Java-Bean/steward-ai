@@ -1,0 +1,30 @@
+{% extends "public.html" %}
+{% block title %}{{ listing.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/m/shares/shares.css">{% endblock %}
+{% block content %}
+{% if crumbs %}<p class="crumbs">{% for c in crumbs %}<a href="{{ c.href }}">{{ c.name }}</a> / {% endfor %}</p>{% endif %}
+<h1 class="filename">{{ listing.name }}</h1>
+<p class="hint">{% if expires_at %}This link works until {{ expires_at.strftime('%Y-%m-%d %H:%M') }} UTC.{% endif %}</p>
+<p><a class="button" href="{{ zip_href }}">Download all (zip)</a></p>
+{% if rows %}
+<table class="files">
+  <thead><tr><th>Name</th><th class="num">Size</th><th>Modified</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}{% set e = row.entry %}
+    <tr>
+      {% if e.kind == 'dir' %}
+      <td><a href="{{ row.href }}" class="dir">{{ e.name }}/</a></td><td class="num"></td>
+      {% else %}
+      <td><a href="{{ row.href }}">{{ e.name }}</a></td><td class="num">{{ e.size|filesizeformat }}</td>
+      {% endif %}
+      <td>{{ e.modified.strftime('%Y-%m-%d') if e.modified else '' }}</td>
+      <td>{% if row.download %}<a href="{{ row.download }}">Download</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if listing.truncated %}<p class="warning">This folder has more entries than can be shown at once. Download it as a zip to get everything.</p>{% endif %}
+{% else %}
+<p>This folder is empty.</p>
+{% endif %}
+{% endblock %}

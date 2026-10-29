@@ -11,6 +11,7 @@
   <a class="button small secondary" href="{{ base }}/rename?path={{ entry.path|urlencode }}">Rename</a>
   <a class="button small secondary" href="{{ base }}/move?path={{ entry.path|urlencode }}">Move…</a>
   <a class="button small secondary" href="{{ base }}/delete?path={{ entry.path|urlencode }}">Delete…</a>
+  {% if shares %}<a class="button small secondary" href="{{ shares }}/new?path={{ entry.path|urlencode }}">Share…</a>{% endif %}
 </div>
 {% set src = base ~ '/raw?inline=1&path=' ~ (entry.path|urlencode) %}
 <div class="preview">

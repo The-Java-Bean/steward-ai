@@ -27,6 +27,7 @@ from steward.api.security import SAFE_METHODS, level_of
 from steward.core.runtime import Runtime
 from steward.core.setup import SetupToken
 from steward.modules.files_ui import FilesUiModule
+from steward.modules.shares import SharesModule
 from steward.sdk import Registry
 
 PUBLIC = {
@@ -35,6 +36,12 @@ PUBLIC = {
     ("POST", "/login"),
     ("GET", "/setup"),
     ("POST", "/setup"),
+    # Public share links (plan §14.4): they serve only what a share's token stands for,
+    # checked by the core on every request (tests/integration/test_shares.py).
+    ("GET", "/s/1"),
+    ("POST", "/s/1"),
+    ("GET", "/s/1/1"),
+    ("POST", "/s/1/1"),
 }
 """The only routes anyone may call without logging in. Changing this set is a security
 decision: say why in the commit."""
@@ -81,7 +88,7 @@ def fast_hashes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def runtime(tmp_path: Path) -> Iterator[Runtime]:
-    rt = make_runtime(tmp_path, (HelloModule, FilesUiModule, _posting_module()))
+    rt = make_runtime(tmp_path, (HelloModule, FilesUiModule, SharesModule, _posting_module()))
     yield rt
     rt.close()
 
@@ -110,6 +117,7 @@ def test_the_route_list_includes_module_pages(app: FastAPI) -> None:
     assert {"/ui/files", "/ui/files/raw", "/ui/files/move", "/ui/files/delete"} <= paths
     assert {"/ui/locked", "/ui/locked/raw", "/ui/locked/unlock", "/ui/locked/search"} <= paths
     assert "/ui/files/unlock" not in paths  # unlocking happens only in the Locked Folder
+    assert {"/ui/shares", "/ui/shares/new", "/ui/shares/1/revoke", "/s/1", "/s/1/1"} <= paths
 
 
 def test_only_the_listed_routes_are_public(app: FastAPI) -> None:

@@ -14,7 +14,7 @@
     {% if nav %}
     <nav aria-label="Main">
       {% for entry in nav %}
-      <a href="{{ entry.path }}"{% if path == entry.path or (entry.path != '/ui/' and path.startswith(entry.path)) %} aria-current="page"{% endif %}>{{ entry.title }}</a>
+      <a href="{{ entry.path }}"{% if path == entry.path or (entry.path != '/ui/' and path.startswith(entry.path)) %} aria-current="page"{% endif %}>{{ entry.title }}{% if entry.count %} <span class="badge" title="Needs attention">{{ entry.count }}</span>{% endif %}</a>
       {% endfor %}
     </nav>
     <form method="post" action="/logout" class="logout">

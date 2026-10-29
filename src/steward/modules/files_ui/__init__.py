@@ -29,7 +29,7 @@ def link(path: str, kind: EntryKind) -> str:
 
 class FilesUiModule:
     name: ClassVar[str] = "files_ui"
-    version: ClassVar[str] = "0.2.0"
+    version: ClassVar[str] = "0.3.0"
     kind: ClassVar[ModuleKind] = "feature"
     requires: ClassVar[tuple[str, ...]] = ()
     config_model: ClassVar[type[ModuleConfig] | None] = None

@@ -7,6 +7,27 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Share links (`shares`, a built-in module on by default; ADR 0020): share a file or a
+  folder from the file manager as a public link `/s/<token>` (128-bit token) with an
+  expiry (7 days by default, 1/7/30 days, any number of days, or none: allowed with a
+  warning and a password check) and a password (on by default, with a suggested one;
+  shown once). Folder shares can be a snapshot of the files there now. Visitors get a
+  password form (wrong passwords are slowed down), file pages with previews and
+  downloads, folder listings and zips. The core re-checks every request: nothing locked,
+  hidden, `local-only`, `excluded` or in a non-shareable folder is ever served, even if
+  it changed after sharing. `/ui/shares` lists active and past shares (filters, access
+  count, last access, an access log per share, change expiry or password, revoke) and
+  hides the names of items now in locked folders; the navigation shows how many shares
+  never expire. Actions `shares.create|update|revoke` are journaled (undo a share =
+  turn it off; revoking is final), job `shares.expire` every 15 minutes, exporter
+  without tokens and password hashes. `api.public_url` sets the links' address.
+- SDK: share links (`steward.sdk.shares`: `Registry.share_links`, `ShareRequest`,
+  `SharedItem`, `SharedListing`, `TOKEN_PATTERN`); module state access
+  (`steward.sdk.state`: `StateAccess`, `UTCDateTime`, `utcnow`; `Web.state`,
+  `JobContext.state`, `ReadOnlyFS.read_state`, `GuardedFS.write_state`); privacy
+  classes (`PathPrivacy`, `ReadOnlyFS.privacy`, `Files.privacy`);
+  `ReadOnlyFS.file_ids_in`, `GuardedFS.actor`, `Plan.transient` (never journaled);
+  `Web.page_url`, `Web.link_to`, `Web.absolute_url`; `ui_page(badge=)`.
 - The Locked Folder (`/ui/locked`, ADR 0019): behind a password check (subject to the
   re-auth window), the locked folders and the full file manager inside them (uploads,
   new folder, rename, move, delete to the locked trash, previews, downloads, zips),
@@ -141,6 +162,9 @@ All notable changes to steward-ai are recorded here. The format follows
   allow-list, generated `THIRD_PARTY_NOTICES.md`.
 
 ### Changed
+- `JobContext` has a new required field `state` (built by the worker).
+- `files_ui` 0.3.0: "Share" and "Share folder…" links (when the `shares` page exists; never in
+  the Locked Folder).
 - `folder.lock` takes `permanent` (sensitive; can't be undone) and can make an existing
   lock permanent; `folder.unlock` refuses permanent locks and locks set on a parent
   folder already when planning. The locked search scope leaves out locked trash and

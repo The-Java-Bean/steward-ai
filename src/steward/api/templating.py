@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +17,10 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, se
 
 import steward
 from steward.api.security import PRESESSION_COOKIE, api_state
+from steward.sdk import Badge
 from steward.ui import TEMPLATES_DIR
+
+log = logging.getLogger(__name__)
 
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 """The core's own templates (used when an app has no `state.templates`)."""
@@ -57,11 +61,28 @@ NOTICES = {
 class NavEntry:
     path: str
     title: str
+    badge: Badge | None = None
 
 
-def nav(request: Request) -> list[NavEntry]:
+@dataclass(frozen=True, slots=True)
+class NavItem:
+    path: str
+    title: str
+    count: int = 0
+
+
+def nav(request: Request) -> list[NavItem]:
     entries: list[NavEntry] = request.app.state.nav
-    return entries
+    items: list[NavItem] = []
+    for entry in entries:
+        count = 0
+        if entry.badge is not None:
+            try:
+                count = int(entry.badge(request.app.state.runtime.dbs.state))
+            except Exception:  # a module's bug mustn't break every page
+                log.warning("navigation badge failed", extra={"fields": {"page": entry.path}})
+        items.append(NavItem(entry.path, entry.title, count))
+    return items
 
 
 def render(

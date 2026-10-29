@@ -23,12 +23,14 @@ Paths are `library:relative/path` strings. Parameter fields holding one are type
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+from sqlalchemy import Connection
 
 from steward.sdk.stages import Sensitivity
 
@@ -119,6 +121,10 @@ class Plan:
     sensitive: bool = False
     """Sensitive with these parameters even though the action type isn't (a permanent
     lock, say). A plan can only add sensitivity, never remove it."""
+    transient: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    """Values `apply` needs that are never stored: not in the journal, not in previews
+    shown to anyone (a password, a long list of file IDs). Undo plans don't have them,
+    so an inverse must not depend on them."""
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -180,6 +186,21 @@ class PathPolicy:
     """The lock can only be removed on the host (`steward folders unlock --permanent`)."""
 
 
+@dataclass(frozen=True, slots=True)
+class PathPrivacy:
+    """The privacy class of a file or folder: what may happen with it."""
+
+    sensitivity: Sensitivity
+    """Highest of the folder's sensitivity, `privacy.yaml` rules and per-file overrides."""
+    locked: bool
+    hidden: bool
+    """Not shown in normal views (locked, hidden, trash or copy-holding folders)."""
+    shareable: bool
+    """May be shared: not hidden, `normal` sensitivity and in a shareable folder."""
+    reason: str | None = None
+    """Why it can't be shared (for people), when `shareable` is false."""
+
+
 @runtime_checkable
 class ReadOnlyFS(Protocol):
     """What an action type may look at while planning."""
@@ -209,12 +230,30 @@ class ReadOnlyFS(Protocol):
         """`path` if nothing is there, else `name (2).ext`, `name (3).ext`..."""
         ...
 
+    def privacy(self, path: str) -> PathPrivacy:
+        """The privacy class of `path` (sharing rules, plan §14.4)."""
+        ...
+
+    def read_state(self) -> AbstractContextManager[Connection]:
+        """A read transaction on `state.db`, for the action type's own module tables."""
+        ...
+
+    def file_ids_in(self, path: str) -> list[str]:
+        """The ids discovery gave the files inside the folder `path` (at any depth; only
+        files it has scanned)."""
+        ...
+
     def now(self) -> datetime: ...
 
 
 class GuardedFS(ReadOnlyFS, Protocol):
     """The only write handle. Built by the executor for one `apply`; every method checks
     the path rules again and never follows symlinks or overwrites."""
+
+    @property
+    def actor(self) -> str:
+        """Who is running the action (`user:<name>`; the journal records it too)."""
+        ...
 
     def mkdir(self, path: str, *, parents: bool = False, mode: int = 0o755) -> list[str]:
         """Create a folder (and missing parents if asked). Returns the folders created.
@@ -252,6 +291,13 @@ class GuardedFS(ReadOnlyFS, Protocol):
     def set_folder_type(self, path: str, type_name: str) -> None:
         """Map a folder to a folder type (used for folders steward-ai creates for itself,
         such as a library's trash)."""
+        ...
+
+    def write_state(self, op: Callable[[Connection], None]) -> None:
+        """Change the module's own `state.db` tables in the executor's transaction,
+        together with the journal entry (after `apply` returns). `op` may raise
+        `ActionRefused` to cancel the whole entry; it must not have changed any files
+        before that, so use it for actions that only change rows."""
         ...
 
 

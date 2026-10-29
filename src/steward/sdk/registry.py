@@ -27,8 +27,9 @@ from steward.sdk.health import HealthCheck
 from steward.sdk.jobs import LANES, WORKER_LANES, JobHandler, Lane
 from steward.sdk.module import ModuleConfig
 from steward.sdk.schedules import When
+from steward.sdk.shares import ShareLinkHandler
 from steward.sdk.stages import ARTIFACT_PATTERN, AppliesTo, Stage, StageRunner, _always
-from steward.sdk.ui import UI_PATH_PATTERN, UiPage
+from steward.sdk.ui import UI_PATH_PATTERN, Badge, UiPage
 from steward.sdk.web import LinkBuilder
 
 if TYPE_CHECKING:
@@ -140,6 +141,10 @@ class Registrations:
 
     def link_builders(self) -> dict[str, LinkBuilder]:
         return {e.name: cast(LinkBuilder, e.item) for e in self.at("link_builder")}
+
+    def share_links(self) -> dict[str, ShareLinkHandler]:
+        """Module -> the handler of `/s/<token>` links (at most one may be enabled)."""
+        return {e.module: cast(ShareLinkHandler, e.item) for e in self.at("share_links")}
 
     def migrations(self, database: Database) -> dict[str, Path]:
         """Owner (`core` or a module name) -> directory of Alembic revision files."""
@@ -270,11 +275,12 @@ class Registry:
         nav: bool = True,
         templates: Path | None = None,
         static: Path | None = None,
+        badge: Badge | None = None,
     ) -> None:
         """Register a web UI page: `router` is mounted at `path` (`/ui/<slug>`), behind
         login and CSRF checks the module can't turn off (see `steward.sdk.ui`).
         `templates` and `static` are directories (see `UiPage`); a module's pages share
-        one of each."""
+        one of each. `badge` gives a count shown next to the navigation entry."""
         if not UI_PATH_PATTERN.match(path):
             raise ValueError(f"UI page path {path!r} must look like /ui/<lowercase-slug>")
         title = title.strip()
@@ -283,12 +289,17 @@ class Registry:
         for label, directory in (("templates", templates), ("static", static)):
             if directory is not None and not Path(directory).is_dir():
                 raise ValueError(f"UI page {name!r}: {label} {directory} isn't a directory")
-        self._add("ui_page", name, UiPage(path, router, title, nav, templates, static))
+        self._add("ui_page", name, UiPage(path, router, title, nav, templates, static, badge))
 
     def link_builder(self, name: str, builder: LinkBuilder) -> None:
         """Register how to link to a file or folder (`library:path`) in this module's
         pages; the core's pages (search results, for example) use the first one."""
         self._add("link_builder", name, builder)
+
+    def share_links(self, handler: ShareLinkHandler) -> None:
+        """Answer the public share links `/s/<token>…` (see `steward.sdk.shares`). Only
+        one enabled module may do this; a second one stops startup."""
+        self._add("share_links", self._module, handler)
 
     def action(self, action_type: ActionType) -> None:
         """Register an action type (see `steward.sdk.actions`). Its name is

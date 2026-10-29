@@ -23,14 +23,17 @@ from steward.api.security import api_state, require_principal, safe_next
 from steward.api.templating import redirect, render
 from steward.core.auth import Principal
 from steward.core.executor import ActionFailed, Executor, SensitiveActionError
+from steward.core.executor.guarded import check_segments, split_path
 from steward.core.files import READ_CHUNK, Browser, OpenFile, stream_zip
 from steward.core.folders import load_policy
+from steward.core.privacy.sharing import HIDDEN, SharingRules
 from steward.core.runtime import Runtime
-from steward.sdk import ActionRefused
+from steward.sdk import ActionRefused, PathPrivacy, StateAccess
 from steward.sdk.web import (
     ActionDone,
     ActionPreview,
     Entry,
+    EntryKind,
     FilePage,
     FolderListing,
     LibraryInfo,
@@ -113,6 +116,20 @@ class WebHandle:
     @property
     def static_url(self) -> str:
         return f"/static/m/{self.module}"
+
+    @property
+    def state(self) -> StateAccess:
+        return self.runtime.dbs.state
+
+    def page_url(self, name: str) -> str | None:
+        pages: dict[str, str] = self.request.app.state.page_paths
+        return pages.get(name)
+
+    def link_to(self, path: str, kind: EntryKind) -> str | None:
+        return first_link(self.request, path, kind)
+
+    def absolute_url(self, path: str) -> str:
+        return absolute_url(self.request, path)
 
     def render(
         self,
@@ -205,6 +222,21 @@ class WebFiles:
     def unlock_preview(self, path: str) -> UnlockPreview:
         self.web.check_scope("locked")
         return self.web.browser().unlock_preview(path)
+
+    def privacy(self, paths: Sequence[str]) -> dict[str, PathPrivacy]:
+        runtime = self.web.runtime
+        with runtime.dbs.state.read() as conn:
+            sharing = SharingRules.load(conn, load_policy(conn), runtime.privacy)
+        found: dict[str, PathPrivacy] = {}
+        for path in paths:
+            try:
+                library_id, relpath = split_path(path)
+                check_segments(relpath)
+            except ActionRefused:
+                found[path] = HIDDEN
+                continue
+            found[path] = sharing.check(library_id, relpath)
+        return found
 
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:
         self.web.check_scope(scope)
@@ -358,6 +390,15 @@ class WebActions:
             self.web.require_reauth()
             entry = self.executor.undo(entry_id, actor=actor, confirmed=True)
         return ActionDone(entry.entry_id, entry.summary, entry.undoable)
+
+
+def absolute_url(request: Request, path: str) -> str:
+    """`path` as a full URL: `api.public_url` if set, else this request's address."""
+    configured = request.app.state.runtime.config.steward.api.public_url
+    if configured:
+        return f"{configured}{path}"
+    scheme = "https" if getattr(request.state, "https", False) else request.url.scheme
+    return f"{scheme}://{request.url.netloc}{path}"
 
 
 def first_link(request: Request, path: str, kind: str) -> str | None:

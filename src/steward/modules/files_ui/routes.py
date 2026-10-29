@@ -99,7 +99,9 @@ def make_router(scope: Scope) -> APIRouter:
         return folder_url(path, scope=scope, **extra)
 
     def common(web: WebDep, **extra: Any) -> dict[str, Any]:
-        return {"base": base, "scope": scope, "kinds": KINDS, **extra}
+        # The shares module's dialog, if it's enabled; never offered for locked folders.
+        shares = None if locked else web.page_url("shares.page")
+        return {"base": base, "scope": scope, "kinds": KINDS, "shares": shares, **extra}
 
     # --- browsing -----------------------------------------------------------------------
 

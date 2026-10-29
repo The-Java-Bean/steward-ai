@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
+
+if TYPE_CHECKING:
+    from steward.sdk.state import StateAccess
 
 Lane = Literal["io", "cpu", "llm-local", "llm-remote", "events", "executor"]
 """Which pool of workers runs a job. `executor` runs in the API process (the only
@@ -31,6 +34,8 @@ class JobContext:
     """1 on the first run, 2 on the first retry, and so on."""
     renew_lease: Callable[[], None] = field(repr=False, compare=False)
     """Call during long work to keep the job from being handed to another worker."""
+    state: StateAccess = field(repr=False, compare=False)
+    """`state.db`, for the module's own tables (see `steward.sdk.state`)."""
 
 
 JobHandler = Callable[[JobContext], None]

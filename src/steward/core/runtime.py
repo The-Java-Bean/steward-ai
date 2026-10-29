@@ -64,6 +64,7 @@ class Runtime:
             self.dbs,
             self.registrations.actions(),
             max_attempts=self.config.pipeline.jobs.max_attempts,
+            rules=self.privacy,
         )
 
     @cached_property

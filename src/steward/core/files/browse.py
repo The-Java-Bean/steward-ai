@@ -6,7 +6,8 @@ Listings come from the disk (so files discovery hasn't seen yet still show) merg
 `state.db` (file IDs) and `index.db` (types). Every path is opened one component at a
 time without following symlinks, the same way the executor does, and checked against
 the scope: normal views never reach locked, hidden or trash folders; the `locked` scope
-reaches only locked folders. Nothing here writes.
+reaches only locked folders; the `shared` scope (public share links) reaches only one
+shared item and what inside it may be shared. Nothing here writes.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import stat
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 
@@ -35,6 +36,7 @@ from steward.core.executor.guarded import (
 )
 from steward.core.folders import FolderRef, PathError
 from steward.core.folders.policy import FolderMapping, Policy
+from steward.core.privacy.sharing import SharingRules
 from steward.core.search import SearchError, SearchFilters, Visibility, search_files
 from steward.sdk import ActionRefused
 from steward.sdk.web import (
@@ -53,6 +55,30 @@ READ_CHUNK = 256 * 1024
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 _IN_BATCH = 500
 UNLOCK_SAMPLE = 10
+
+type BrowseScope = Literal["normal", "locked", "shared"]
+"""The SDK's scopes plus `shared` (only for the core's share-link handling)."""
+
+
+@dataclass(frozen=True, slots=True)
+class SharedArea:
+    """What the `shared` scope may reach: `relpath` in `library_id` and what inside it
+    may be shared; with `allowed` (a snapshot) only those relpaths."""
+
+    library_id: str
+    relpath: str
+    sharing: SharingRules
+    allowed: frozenset[str] | None = None
+
+    def allows(self, library_id: str, relpath: str) -> bool:
+        if library_id != self.library_id:
+            return False
+        root = self.relpath
+        if not (root == "" or relpath == root or relpath.startswith(root + "/")):
+            return False
+        if self.allowed is not None and relpath not in self.allowed:
+            return False
+        return self.sharing.check(library_id, relpath).shareable
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +135,11 @@ class ZipMember:
 class Browser:
     """Read access to the libraries for one policy snapshot."""
 
-    def __init__(self, dbs: Databases, policy: Policy) -> None:
+    def __init__(self, dbs: Databases, policy: Policy, shared: SharedArea | None = None) -> None:
         self.dbs = dbs
         self.policy = policy
         self.visibility = Visibility(policy)
+        self.shared = shared
 
     # --- paths and scope ---------------------------------------------------------------
 
@@ -122,7 +149,7 @@ class Browser:
             for lib in sorted(self.policy.libraries.values(), key=lambda lib: lib.position)
         ]
 
-    def locate(self, path: str, scope: Scope) -> Located:
+    def locate(self, path: str, scope: BrowseScope) -> Located:
         """Parse a `library:path` and check it is visible in `scope` (else `NotFound`)."""
         try:
             library_id, relpath = split_path(path)
@@ -134,11 +161,13 @@ class Browser:
             raise NotFound(path)
         return Located(library_id, relpath, library.root)
 
-    def visible(self, library_id: str, relpath: str, scope: Scope) -> bool:
+    def visible(self, library_id: str, relpath: str, scope: BrowseScope) -> bool:
         if relpath.startswith(TEMP_PREFIX) or f"/{TEMP_PREFIX}" in relpath:
             return False
         if scope == "locked":
             return self.visibility.in_locked_view(library_id, relpath)
+        if scope == "shared":
+            return self.shared is not None and self.shared.allows(library_id, relpath)
         return not self.visibility.is_hidden(library_id, relpath)
 
     def locked_folders(self) -> list[LockedFolder]:
@@ -159,7 +188,7 @@ class Browser:
 
     # --- listing -------------------------------------------------------------------------
 
-    def listing(self, path: str, *, scope: Scope, limit: int) -> FolderListing:
+    def listing(self, path: str, *, scope: BrowseScope, limit: int) -> FolderListing:
         where = self.locate(path, scope)
         try:
             settings = self.policy.settings_for(FolderRef(where.library_id, where.relpath))
@@ -208,7 +237,7 @@ class Browser:
             ),
         )
 
-    def entry(self, path: str, *, scope: Scope) -> Entry:
+    def entry(self, path: str, *, scope: BrowseScope) -> Entry:
         where = self.locate(path, scope)
         if where.relpath == "":
             return Entry(self.policy.libraries[where.library_id].name, where.path, "dir")
@@ -352,7 +381,7 @@ class Browser:
 
     # --- reading ---------------------------------------------------------------------------
 
-    def open(self, path: str, *, scope: Scope) -> OpenFile:
+    def open(self, path: str, *, scope: BrowseScope) -> OpenFile:
         """Open a regular file for reading. Raises `NotFound`."""
         where = self.locate(path, scope)
         if where.relpath == "":
@@ -368,7 +397,7 @@ class Browser:
             raise
         return OpenFile(fd, entry, st.st_size)
 
-    def zip_members(self, paths: Sequence[str], *, scope: Scope) -> Iterator[ZipMember]:
+    def zip_members(self, paths: Sequence[str], *, scope: BrowseScope) -> Iterator[ZipMember]:
         """Members for a zip of `paths` (files and whole folders), skipping whatever isn't
         visible in `scope`. Raises `NotFound` before yielding if a path isn't there."""
         located = [self.locate(p, scope) for p in paths]
@@ -377,7 +406,7 @@ class Browser:
                 self._stat(where)
         return self._members(located, scope)
 
-    def _members(self, located: list[Located], scope: Scope) -> Iterator[ZipMember]:
+    def _members(self, located: list[Located], scope: BrowseScope) -> Iterator[ZipMember]:
         for where in located:
             top = where.name or self.policy.libraries[where.library_id].name
             st = self._stat(where) if where.relpath else None
@@ -386,7 +415,7 @@ class Browser:
                 continue
             yield from self._walk(where, top, scope)
 
-    def _walk(self, where: Located, top: str, scope: Scope) -> Iterator[ZipMember]:
+    def _walk(self, where: Located, top: str, scope: BrowseScope) -> Iterator[ZipMember]:
         try:
             with self._dir(where) as fd:
                 for dirpath, dirnames, filenames, dir_fd in os.fwalk(
@@ -473,7 +502,7 @@ class Browser:
         relpath: str,
         st: os.stat_result,
         known: dict[str, tuple[Any, Any]],
-        scope: Scope,
+        scope: BrowseScope,
         *,
         fd: int | None = None,
     ) -> Entry:
@@ -497,7 +526,7 @@ class Browser:
             file_kind=blob.kind if blob is not None else kind_of(mime),
         )
 
-    def _crumbs(self, where: Located, scope: Scope) -> tuple[Crumb, ...]:
+    def _crumbs(self, where: Located, scope: BrowseScope) -> tuple[Crumb, ...]:
         parts = where.parts
         if not parts:
             return ()

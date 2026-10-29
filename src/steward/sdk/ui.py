@@ -13,12 +13,19 @@ core layout, read files and run actions.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
+
+    from steward.sdk.state import StateAccess
+
+type Badge = Callable[[StateAccess], int]
+"""A count shown next to the page's navigation entry when it isn't 0 (computed for
+every page view: keep it to one cheap query)."""
 
 UI_PATH_PATTERN = re.compile(r"^/ui/[a-z][a-z0-9_-]*$")
 
@@ -38,3 +45,4 @@ class UiPage:
     static: Path | None = None
     """The module's static files, served publicly at `/static/m/<module>/` (scripts and
     styles only; never anything private)."""
+    badge: Badge | None = None

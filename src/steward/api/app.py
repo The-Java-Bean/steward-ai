@@ -23,6 +23,7 @@ from steward.api.routes import home as home_routes
 from steward.api.routes import pages as page_routes
 from steward.api.routes import settings as settings_routes
 from steward.api.routes import setup as setup_routes
+from steward.api.routes import shares as share_routes
 from steward.api.routes import uploads as upload_routes
 from steward.api.security import (
     ApiState,
@@ -39,6 +40,7 @@ from steward.core.auth import AuthError, LockedOut, NotAllowed, ReauthRequired
 from steward.core.loader import ModuleLoadError
 from steward.core.runtime import Runtime
 from steward.core.setup import SetupToken
+from steward.sdk import ShareLinkHandler
 from steward.sdk.web import NotFound
 from steward.ui import STATIC_DIR
 
@@ -93,6 +95,7 @@ def create_app(runtime: Runtime, *, setup_token: SetupToken | None = None) -> Fa
         page_routes.router,
         api_v1.router,
         upload_routes.router,
+        share_routes.router,
     ):
         app.include_router(router)
     nav.extend(_mount_module_pages(app, runtime))
@@ -107,11 +110,21 @@ def create_app(runtime: Runtime, *, setup_token: SetupToken | None = None) -> Fa
     app.state.nav = nav
     app.state.steward_web = make_web
     app.state.link_builders = list(runtime.registrations.link_builders().values())
+    app.state.share_links = _share_links(runtime)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     _check_routes(app)
     _add_handlers(app)
     app.middleware("http")(_security_headers)
     return app
+
+
+def _share_links(runtime: Runtime) -> tuple[str, ShareLinkHandler] | None:
+    handlers = runtime.registrations.share_links()
+    if len(handlers) > 1:
+        raise UiPageError(
+            "only one module may answer share links; enabled: " + ", ".join(sorted(handlers))
+        )
+    return next(iter(handlers.items()), None)
 
 
 def _mount_module_pages(app: FastAPI, runtime: Runtime) -> list[NavEntry]:
@@ -147,7 +160,10 @@ def _mount_module_pages(app: FastAPI, runtime: Runtime) -> list[NavEntry]:
         app.include_router(page.router, prefix=page.path)
         pages.append(PageInfo(module, page.path, False, False))
         if page.nav:
-            entries.append(NavEntry(page.path, page.title))
+            entries.append(NavEntry(page.path, page.title, page.badge))
+    app.state.page_paths = {
+        name: page.path for name, page in runtime.registrations.ui_pages().items()
+    }
     app.state.module_pages = sorted(
         (PageInfo(p.module, p.path, p.module in templates, p.module in static) for p in pages),
         key=lambda p: len(p.path),

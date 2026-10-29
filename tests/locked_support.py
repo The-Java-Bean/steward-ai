@@ -16,6 +16,7 @@ from steward.core.db.schema import sessions
 from steward.core.discovery import Scanner
 from steward.core.folders import FolderRef, store
 from steward.modules.files_ui import FilesUiModule
+from steward.modules.shares import SharesModule
 
 ACTOR = "user:1"
 SECRET_NAME = "okapi-hidden.txt"
@@ -40,7 +41,7 @@ TREE = {
 
 class LockedEnv:
     def __init__(self, tmp_path: Path) -> None:
-        self.runtime = make_runtime(tmp_path, (FilesUiModule,))
+        self.runtime = make_runtime(tmp_path, (FilesUiModule, SharesModule))
         self.root = tmp_path / "lib"
         for relpath, content in TREE.items():
             path = self.root / relpath

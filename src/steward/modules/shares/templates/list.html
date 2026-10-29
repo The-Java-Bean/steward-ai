@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Shares{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/shares.css"><script src="{{ static_url }}/shares.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Shares</h1>
+<p class="hint">Every link to your files, active and past. To share something, open it in Files and choose Share.</p>
+<nav class="tabs" aria-label="Status">
+  <a href="?status=active"{% if status == 'active' %} aria-current="page"{% endif %}>Active</a>
+  <a href="?status=past"{% if status == 'past' %} aria-current="page"{% endif %}>Past</a>
+</nav>
+<form method="get" class="filters">
+  <input type="hidden" name="status" value="{{ status }}">
+  <label>Path contains <input name="q" value="{{ q }}" maxlength="200"></label>
+  <label>Created <select name="age">{% for value, label in ages %}<option value="{{ value }}"{% if value == age %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Provider <select name="provider" disabled><option>built-in</option></select></label>
+  <button type="submit" class="small secondary">Filter</button>
+</form>
+{% if rows %}
+<table class="shares">
+  <thead><tr><th>Item</th>{% if status == 'active' %}<th>Link</th><th>Expires</th>{% else %}<th>Ended</th>{% endif %}<th>Password</th><th class="num">Opened</th><th>Created</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}{% set s = row.share %}
+    <tr>
+      <td>{% include "shares/_row_item.html" %}{% if row.problem %}<br><span class="warning">Not working now: {{ row.problem }}</span>{% endif %}</td>
+      {% if status == 'active' %}
+      <td>{% include "shares/_link.html" %}</td>
+      <td>{% if s.no_expiry %}<span class="no-expiry">no expiry</span>{% else %}{{ s.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</td>
+      {% else %}
+      <td>{{ row.ended.strftime('%Y-%m-%d %H:%M') if row.ended else '' }} UTC · {{ {'revoked': 'revoked', 'expired': 'expired', 'undone': 'undone'}[row.status] }}{% if s.ended_by and row.status == 'revoked' %} by {{ 'you' if s.ended_by == principal.actor else s.ended_by }}{% endif %}</td>
+      {% endif %}
+      <td>{{ 'on' if s.has_password else 'off' }}</td>
+      <td class="num">{{ s.access_count }}{% if s.last_access_at %}<br><span class="hint">last {{ s.last_access_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}</td>
+      <td>{{ s.created_at.strftime('%Y-%m-%d %H:%M') }}<br><span class="hint">by {{ row.by }} · built-in</span></td>
+      <td class="row-actions"><a href="{{ path }}/{{ s.share_id }}">Details</a>{% if row.status == 'active' %}<a href="{{ path }}/{{ s.share_id }}/edit">Change</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>{% if status == 'active' %}No active shares.{% else %}No past shares.{% endif %}</p>
+{% endif %}
+{% endblock %}

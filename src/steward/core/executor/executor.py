@@ -41,6 +41,7 @@ from steward.core.folders import store as folder_store
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import Policy
 from steward.core.folders.store import load_policy
+from steward.core.privacy.rules import PrivacyRules
 from steward.sdk import (
     ActionFailed,
     ActionRefused,
@@ -108,11 +109,13 @@ class Executor:
         *,
         clock: Callable[[], datetime] = utcnow,
         max_attempts: int = 5,
+        rules: PrivacyRules | None = None,
     ) -> None:
         self.dbs = dbs
         self.actions = dict(actions)
         self.clock = clock
         self.max_attempts = max_attempts
+        self.rules = rules or PrivacyRules.default()
 
     # --- looking -------------------------------------------------------------------
 
@@ -126,7 +129,7 @@ class Executor:
         """Plan without applying (for confirmation dialogs)."""
         action = self.action_type(name)
         policy = self._policy()
-        view = ReadOnlyView(policy, self.dbs.state, self.clock)
+        view = self._view(policy)
         plan = action.plan(self._params(action, params), view)
         self._check_paths(view, plan)
         return Preview(action, plan, action.render(plan), self._sensitive(action, plan, view))
@@ -145,7 +148,7 @@ class Executor:
         action = self.action_type(name)
         parsed = self._params(action, params)
         with WRITE_LOCK:
-            view = ReadOnlyView(self._policy(), self.dbs.state, self.clock)
+            view = self._view(self._policy())
             plan = action.plan(parsed, view)
             return self._apply(
                 action, plan, view, actor=actor, confirmed=confirmed, proposal_id=proposal_id
@@ -164,7 +167,7 @@ class Executor:
             action = self.action_type(plan.action)
             if entry.sensitive and not confirmed:
                 raise SensitiveActionError("undoing a sensitive action needs your password")
-            view = ReadOnlyView(self._policy(), self.dbs.state, self.clock)
+            view = self._view(self._policy())
             return self._apply(
                 action, plan, view, actor=actor, confirmed=confirmed, undo_of=entry_id
             )
@@ -193,8 +196,9 @@ class Executor:
                     f"{want.path} changed since the action was planned ({_drift(want, actual)})"
                 )
 
-        fs = Guarded(view.policy, self.dbs.state, self.clock)
+        fs = Guarded(view.policy, self.dbs.state, self.clock, self.rules)
         fs.allowed_writes = set(plan.writes)
+        fs.actor = actor
         try:
             applied = action.apply(plan, fs)
         except ActionRefused:
@@ -204,9 +208,7 @@ class Executor:
             self._failed(action.name, actor, type(exc).__name__)
             raise ActionFailed(f"{plan.summary} failed: {exc.strerror or exc}") from exc
         try:
-            inverse = action.inverse(
-                plan, applied, ReadOnlyView(view.policy, self.dbs.state, self.clock)
-            )
+            inverse = action.inverse(plan, applied, self._view(view.policy))
         except ActionRefused:
             inverse = None
         except Exception:
@@ -384,6 +386,9 @@ class Executor:
                 max_attempts=self.max_attempts,
                 now=now,
             )
+
+    def _view(self, policy: Policy) -> ReadOnlyView:
+        return ReadOnlyView(policy, self.dbs.state, self.clock, self.rules)
 
     def _policy(self) -> Policy:
         with self.dbs.state.read() as conn:

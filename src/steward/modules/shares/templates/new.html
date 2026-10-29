@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Share {{ entry.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/shares.css">{% endblock %}
+{% block content %}
+<h1 class="filename">Share {{ entry.name }}{% if entry.kind == 'dir' %}/{% endif %}</h1>
+<p class="hint">{{ entry.path }}</p>
+{% if is_root %}
+<p class="error">A whole library can't be shared. Share a folder inside it.</p>
+{% elif not privacy.shareable %}
+<p class="error">This can't be shared. {{ privacy.reason }}</p>
+{% else %}
+<form method="post" action="/ui/shares/new">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="path" value="{{ entry.path }}">
+  <fieldset class="choices">
+    <legend>The link works for</legend>
+    {% for days in presets %}
+    <label><input type="radio" name="expiry" value="{{ days }}"{% if values.expiry == days %} checked{% endif %}> {{ days }} day{{ '' if days == '1' else 's' }}</label>
+    {% endfor %}
+    <label><input type="radio" name="expiry" value="custom"{% if values.expiry == 'custom' %} checked{% endif %}> <input type="number" name="days" min="1" max="36500" value="{{ values.days }}" aria-label="Number of days"> days</label>
+    <label><input type="radio" name="expiry" value="never"{% if values.expiry == 'never' %} checked{% endif %}> No expiry</label>
+    <p class="warning">A link with no expiry keeps working until you revoke it, for anyone who has it. It asks for your password, and stays highlighted on the Shares page.</p>
+  </fieldset>
+  <fieldset class="choices">
+    <legend>Password</legend>
+    <label><input type="checkbox" name="password_on" value="1"{% if values.password_on %} checked{% endif %}> Ask for a password</label>
+    <label>Password <input name="password" value="{{ values.password }}" minlength="{{ min_password }}" maxlength="1024" autocomplete="off" spellcheck="false"></label>
+    <p class="hint">Send the password separately from the link. It is shown once more after you create the share, then never again.</p>
+  </fieldset>
+  {% if entry.kind == 'dir' %}
+  <fieldset class="choices">
+    <legend>Folder</legend>
+    <p class="warning">Files added to this folder later are shared too, unless you share a snapshot.</p>
+    <label><input type="checkbox" name="snapshot" value="1"{% if values.snapshot %} checked{% endif %}> Snapshot: share only the files there now</label>
+    <p class="hint">A snapshot includes the files steward-ai has already scanned. Anything in a locked folder, marked local-only or excluded is never shared, either way.</p>
+  </fieldset>
+  {% endif %}
+  <p><button type="submit">Create link</button> <a href="{{ back_href or '/ui/shares' }}">Cancel</a></p>
+</form>
+{% endif %}
+{% endblock %}

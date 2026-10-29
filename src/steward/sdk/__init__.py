@@ -18,6 +18,7 @@ from steward.sdk.actions import (
     NodeKind,
     PathField,
     PathPolicy,
+    PathPrivacy,
     PathState,
     Plan,
     ReadOnlyFS,
@@ -46,6 +47,13 @@ from steward.sdk.registry import (
     Subscription,
 )
 from steward.sdk.schedules import Daily, Every, When
+from steward.sdk.shares import (
+    TOKEN_PATTERN,
+    SharedItem,
+    SharedListing,
+    ShareLinkHandler,
+    ShareRequest,
+)
 from steward.sdk.stages import (
     AppliesTo,
     BlobInfo,
@@ -60,7 +68,8 @@ from steward.sdk.stages import (
     StageRunner,
     StageStatus,
 )
-from steward.sdk.ui import UiPage
+from steward.sdk.state import StateAccess, UTCDateTime, utcnow
+from steward.sdk.ui import Badge, UiPage
 from steward.sdk.web import (
     ActionDone,
     ActionPreview,
@@ -88,6 +97,7 @@ __all__ = [
     "EXAMPLE_TREE",
     "LANES",
     "MODULE_NAME_PATTERN",
+    "TOKEN_PATTERN",
     "WORKER_LANES",
     "ActionDone",
     "ActionFailed",
@@ -98,6 +108,7 @@ __all__ = [
     "AiMode",
     "Applied",
     "AppliesTo",
+    "Badge",
     "BlobInfo",
     "Crumb",
     "Daily",
@@ -135,6 +146,7 @@ __all__ = [
     "NotFound",
     "PathField",
     "PathPolicy",
+    "PathPrivacy",
     "PathState",
     "PermanentJobError",
     "Plan",
@@ -147,17 +159,24 @@ __all__ = [
     "Schedule",
     "Scope",
     "Sensitivity",
+    "ShareLinkHandler",
+    "ShareRequest",
+    "SharedItem",
+    "SharedListing",
     "Stage",
     "StageContext",
     "StageResult",
     "StageRunner",
     "StageStatus",
+    "StateAccess",
     "StepOutcome",
     "Subscription",
+    "UTCDateTime",
     "UiPage",
     "UnlockPreview",
     "Viewer",
     "Web",
     "WebDep",
     "When",
+    "utcnow",
 ]

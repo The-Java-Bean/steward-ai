@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Share{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/shares.css"><script src="{{ static_url }}/shares.js" defer></script>{% endblock %}
+{% block content %}{% set s = row.share %}
+<p class="crumbs"><a href="/ui/shares">Shares</a></p>
+<h1>Share</h1>
+<dl>
+  <dt>Item</dt><dd>{% include "shares/_row_item.html" %}</dd>
+  <dt>Status</dt><dd>{% if row.status == 'active' %}Active{% else %}Ended {{ row.ended.strftime('%Y-%m-%d %H:%M') }} UTC ({{ row.status }}){% endif %}{% if row.problem %} · <span class="warning">not working now: {{ row.problem }}</span>{% endif %}</dd>
+  {% if row.link %}<dt>Link</dt><dd>{% include "shares/_link.html" %}</dd>{% endif %}
+  <dt>Expires</dt><dd>{% if s.no_expiry %}<span class="no-expiry">no expiry</span>{% else %}{{ s.expires_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</dd>
+  <dt>Password</dt><dd>{{ 'on' if s.has_password else 'off' }}</dd>
+  <dt>Created</dt><dd>{{ s.created_at.strftime('%Y-%m-%d %H:%M') }} UTC by {{ row.by }} (built-in links)</dd>
+  <dt>Opened</dt><dd>{{ s.access_count }} time(s){% if s.last_access_at %}, last {{ s.last_access_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</dd>
+</dl>
+{% if row.status == 'active' %}
+<div class="toolbar">
+  <a class="button small secondary" href="/ui/shares/{{ s.share_id }}/edit">Change expiry or password</a>
+  <form method="post" action="/ui/shares/{{ s.share_id }}/revoke" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ form_token }}">
+    <button type="submit" class="small">Revoke (turn the link off)</button>
+  </form>
+</div>
+{% endif %}
+<h2>Access log</h2>
+{% if log %}
+<table>
+  <thead><tr><th>Time (UTC)</th><th>What</th><th>Address</th><th>Browser</th></tr></thead>
+  <tbody>
+  {% for a in log %}
+    <tr><td>{{ a.at.strftime('%Y-%m-%d %H:%M:%S') }}</td><td>{{ {'view': 'opened', 'download': 'downloaded a file', 'zip': 'downloaded a zip', 'password_failed': 'wrong password'}[a.kind] }}</td><td>{{ a.ip }}</td><td class="ua" title="{{ a.user_agent }}">{{ a.user_agent }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">The latest 200 entries.</p>
+{% else %}
+<p>Nobody has opened this link yet.</p>
+{% endif %}
+{% endblock %}

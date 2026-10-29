@@ -1,0 +1,7 @@
+{% if row.link %}
+<div class="link-row">
+  <label class="sr-only" for="link-{{ row.share.share_id }}">Link</label>
+  <input id="link-{{ row.share.share_id }}" value="{{ row.link }}" readonly>
+  <button type="button" class="small secondary" data-copy="link-{{ row.share.share_id }}" hidden>Copy</button>
+</div>
+{% endif %}
