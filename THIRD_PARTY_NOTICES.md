@@ -37,6 +37,7 @@ Regenerate this file with `make notices`.
 | python-multipart     | 0.0.32  | Apache-2.0                                    | https://github.com/Kludex/python-multipart                                         |
 | rich                 | 15.0.0  | MIT License                                   | https://github.com/Textualize/rich                                                 |
 | shellingham          | 1.5.4   | ISC License (ISCL)                            | https://github.com/sarugaku/shellingham                                            |
+| sqlite-vec           | 0.1.9   | MIT License, Apache License, Version 2.0      | https://github.com/asg017/sqlite-vec                                                                  |
 | starlette            | 1.10.0  | BSD-3-Clause                                  | https://github.com/Kludex/starlette                                                |
 | typer                | 0.27.3  | MIT                                           | https://github.com/fastapi/typer                                                   |
 | typing-inspection    | 0.4.4   | MIT                                           | https://github.com/pydantic/typing-inspection                                      |

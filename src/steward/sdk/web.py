@@ -95,6 +95,9 @@ class Entry:
     and whether each one matched."""
     page: int | None = None
     """Search results only: the page of that match, for paged documents."""
+    semantic: bool = False
+    """Search results only: found by meaning, not by a word in its name or text (the
+    snippet is then the start of its closest passage)."""
 
 
 @dataclass(frozen=True, slots=True)

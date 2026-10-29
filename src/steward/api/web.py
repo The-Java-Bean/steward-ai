@@ -162,7 +162,7 @@ class WebHandle:
     def browser(self) -> Browser:
         with self.runtime.dbs.state.read() as conn:
             policy = load_policy(conn)
-        return Browser(self.runtime.dbs, policy)
+        return Browser(self.runtime.dbs, policy, embed=self.runtime.query_embedder)
 
     def check_scope(self, scope: Scope) -> None:
         """The locked scope needs a recent password check (without using up a

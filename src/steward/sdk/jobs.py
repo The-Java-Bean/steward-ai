@@ -23,6 +23,16 @@ class PermanentJobError(Exception):
     """Raise from a job handler when retrying can't help; the job goes straight to `dead`."""
 
 
+class RetryLater(Exception):
+    """Raise from a job handler when the job can't run *yet* (a model server is down…):
+    it's queued again after `delay_s` seconds without using up one of its attempts."""
+
+    def __init__(self, reason: str, *, delay_s: float = 60.0) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.delay_s = max(1.0, float(delay_s))
+
+
 @dataclass(frozen=True, slots=True)
 class JobContext:
     """What a job handler receives."""

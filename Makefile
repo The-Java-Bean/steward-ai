@@ -58,8 +58,10 @@ notices:
 		echo "Regenerate this file with \`make notices\`."; \
 		echo; \
 		$(UV) run --locked pip-licenses --from=mixed --format=markdown --with-urls \
-			--packages $(RUNTIME_PACKAGES); \
+			--packages $(RUNTIME_PACKAGES) \
+			| sed 's|https://TODO.com |https://github.com/asg017/sqlite-vec|'; \
 	} > THIRD_PARTY_NOTICES.md
+	@# sqlite-vec's wheel has a placeholder home page; the sed above names the real one.
 
 image:
 	docker build -f deploy/Dockerfile -t $(IMAGE) .

@@ -255,6 +255,7 @@ def search(
             limit=limit,
             offset=offset,
             mode=mode,
+            embed=runtime.query_embedder,
         )
     except SearchError as exc:
         return _refused(exc)
@@ -264,6 +265,7 @@ def search(
             "in": mode,
             "total": results.total,
             "capped": results.capped,
+            "semantic": results.semantic,
             "hits": [h.as_dict() for h in results.hits],
         }
     )

@@ -10,6 +10,7 @@ from steward.core.llm.gateway import (
     RoleNotConfigured,
     Route,
     check_llm_config,
+    model_key,
 )
 from steward.core.llm.transport import (
     ChatRequest,
@@ -36,4 +37,5 @@ __all__ = [
     "RoleNotConfigured",
     "Route",
     "check_llm_config",
+    "model_key",
 ]

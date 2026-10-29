@@ -14,13 +14,16 @@ from steward.core.builtin import (
     register_backup,
     register_core,
     register_deliveries,
+    register_models,
     register_uploads,
 )
 from steward.core.config import Config, ConfigError
 from steward.core.db import Database, Databases, migrate
+from steward.core.embeddings import QueryEmbedder
 from steward.core.executor import Executor
 from steward.core.executor.uploads import Uploads
 from steward.core.llm import Gateway, check_llm_config
+from steward.core.llm.roles import resolve_roles
 from steward.core.loader import (
     EntryPointLike,
     LoadedModules,
@@ -75,6 +78,11 @@ class Runtime:
     def gateway(self) -> Gateway:
         return Gateway(self.config.llm, self.dbs.state, self.privacy)
 
+    @cached_property
+    def query_embedder(self) -> QueryEmbedder:
+        """Embeds search queries for searching by meaning (docs/adr/0023)."""
+        return QueryEmbedder(self.dbs, self.gateway, dict(self.stages.roles))
+
     def migration_owners(self, database: DatabaseName) -> dict[str, Path]:
         """Core first, then modules in dependency order."""
         found = self.registrations.migrations(database)
@@ -121,8 +129,12 @@ def build_runtime(
     built: list[Runtime] = []
     register_backup(modules.registrations, config, lambda: built[0])
     register_uploads(modules.registrations, lambda: built[0])
-    stages = build_graph(modules.registrations.stages())
-    planner = register_stage_jobs(modules.registrations, dbs, stages, config)
+    roles = resolve_roles(modules.registrations.model_roles(), config.llm)
+    stages = build_graph(modules.registrations.stages(), roles)
+    planner = register_stage_jobs(
+        modules.registrations, dbs, stages, config, lambda: built[0].gateway
+    )
+    register_models(modules.registrations, lambda: built[0])
     try:
         schedules = effective_schedules(
             modules.registrations.schedules(), config.pipeline.schedules

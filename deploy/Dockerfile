@@ -47,6 +47,22 @@ for dist in md.distributions():
         dest = pathlib.Path("/licenses/python", dist.metadata["Name"], rel)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(f.locate(), dest)
+# Packages whose wheel ships no license file (sqlite-vec: MIT or Apache-2.0, used under
+# Apache-2.0, whose text is /licenses/LICENSE) get a note with their declared license.
+# Some wheels carry placeholder URLs, so known projects are named here.
+PROJECTS = {"sqlite-vec": "https://github.com/asg017/sqlite-vec"}
+for dist in md.distributions():
+    folder = pathlib.Path("/licenses/python", dist.metadata["Name"])
+    if not folder.exists():
+        folder.mkdir(parents=True)
+        meta = dist.metadata
+        url = PROJECTS.get(meta["Name"]) or meta.get("Home-page") or "no project URL"
+        (folder / "LICENSE-NOTE.txt").write_text(
+            f"{meta['Name']} {meta['Version']} ({url}) ships no license file.\n"
+            f"Declared license: {meta.get('License-Expression') or meta.get('License')}\n"
+            "Where Apache-2.0 is one of the options, steward-ai uses it under Apache-2.0;\n"
+            "the license text is in /licenses/LICENSE.\n"
+        )
 EOF
 
 FROM ${PYTHON_IMAGE}

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, time
 from typing import Any
 
@@ -23,10 +24,19 @@ from sqlalchemy.dialects.sqlite import insert
 from steward.core import queue
 from steward.core.config import Config
 from steward.core.db import Databases, utcnow
-from steward.core.db.schema import blobs, event_cursors, events, pipeline_meta, stage_runs
+from steward.core.db.schema import (
+    blobs,
+    embedding_spaces,
+    event_cursors,
+    events,
+    jobs,
+    pipeline_meta,
+    stage_runs,
+)
 from steward.core.discovery.hashing import HASH_STAGE, HASH_STAGE_VERSION
 from steward.core.discovery.watcher import SCAN_JOB
 from steward.core.folders import load_policy
+from steward.core.llm import Gateway, PrivacyViolation
 from steward.core.privacy import PrivacyRules
 from steward.core.stages.context import Context
 from steward.core.stages.graph import StageGraph
@@ -43,9 +53,11 @@ from steward.sdk import (
     FileChanged,
     JobContext,
     JobHandler,
+    ModelUnavailable,
     PermanentJobError,
     Registrations,
     Registry,
+    RetryLater,
     Stage,
     StageContext,
     StageResult,
@@ -92,9 +104,14 @@ def register_hash_stage(r: Registry) -> None:
 
 
 def register_stage_jobs(
-    registrations: Registrations, dbs: Databases, graph: StageGraph, config: Config
+    registrations: Registrations,
+    dbs: Databases,
+    graph: StageGraph,
+    config: Config,
+    gateway: Callable[[], Gateway] | None = None,
 ) -> Planner:
-    """Called after modules are loaded: one job type per stage, plus the planning jobs."""
+    """Called after modules are loaded: one job type per stage, plus the planning jobs.
+    `gateway` gives stages their models (built lazily, with the runtime)."""
     max_attempts = config.pipeline.jobs.max_attempts
     planner = Planner(
         dbs, graph, max_attempts=max_attempts, privacy=PrivacyRules.from_config(config.privacy)
@@ -102,7 +119,11 @@ def register_stage_jobs(
     r = Registry("core", None, registrations)
     for name, stage in graph.stages.items():
         if name != graph.root:
-            r.job(stage_job_type(name), _stage_handler(stage, dbs, planner), lane=stage.lane)
+            r.job(
+                stage_job_type(name),
+                _stage_handler(stage, dbs, planner, gateway),
+                lane=stage.lane,
+            )
 
     def plan(ctx: JobContext) -> None:
         planned = 0
@@ -188,7 +209,12 @@ def full_pass_needed(dbs: Databases, graph: StageGraph) -> bool:
 # --- running one stage ------------------------------------------------------------
 
 
-def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler:
+def _stage_handler(
+    stage: Stage,
+    dbs: Databases,
+    planner: Planner,
+    gateway: Callable[[], Gateway] | None = None,
+) -> JobHandler:
     graph = planner.graph
 
     def run(ctx: JobContext) -> None:
@@ -201,7 +227,7 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
                 .one_or_none()
             )
             runs = {
-                r.stage: RunRecord(r.stage_version, r.status, r.updated_at)
+                r.stage: RunRecord(r.stage_version, r.status, r.updated_at, r.model)
                 for r in conn.execute(
                     select(stage_runs).where(stage_runs.c.content_hash == content_hash)
                 )
@@ -236,9 +262,15 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
             produces=stage.produces,
             optional=frozenset(available),
             unavailable=frozenset(stage.optional) - available,
+            roles={role: graph.roles[role] for role in stage.roles},
+            gateway=gateway,
+            provenance=tuple(f.file_id for f in rows),
         )
         try:
-            result = stage.run(sctx) or StageResult()
+            try:
+                result = stage.run(sctx) or StageResult()
+            except PrivacyViolation:
+                result = StageResult("skipped", "not sent to the model (privacy rules)")
             if not sctx.unchanged():
                 raise FileChanged("file changed while the stage ran")
         except FileChanged:
@@ -255,6 +287,9 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
                     max_attempts=planner.max_attempts,
                 )
             return
+        except ModelUnavailable as exc:
+            delay = exc.retry_after_s or 60.0
+            raise RetryLater(f"waiting for the model: {exc}", delay_s=delay) from None
         except Exception as exc:
             _record(
                 dbs,
@@ -270,7 +305,7 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
             stage,
             status=result.status,
             error=result.reason[:ERROR_MAX] if result.reason else None,
-            model=result.model,
+            model=graph.model_keys.get(stage.name, result.model),
             prompt_version=result.prompt_version,
         )
         log.debug("stage run", extra={"fields": {**fields, "status": result.status}})
@@ -306,6 +341,72 @@ def _record(
                 index_elements=[stage_runs.c.content_hash, stage_runs.c.stage], set_=values
             )
         )
+
+
+# --- embedding spaces -------------------------------------------------------------
+
+
+def complete_spaces(dbs: Databases, graph: StageGraph, *, now: datetime | None = None) -> int:
+    """Housekeeping: mark the space of each embedding role's current model `complete`
+    once nothing can still add to it (a full pass ran with this graph, and no planning
+    job nor a job of a stage using the role is queued or running), then delete the
+    role's other spaces. Returns the number of spaces completed."""
+    roles = {
+        name: state.model_key
+        for name, state in graph.roles.items()
+        if state.kind == "embed" and state.model_key is not None
+    }
+    if not roles:
+        return 0
+    with dbs.index.read() as conn:
+        signature = conn.execute(
+            select(pipeline_meta.c.value).where(pipeline_meta.c.key == SIGNATURE_KEY)
+        ).scalar()
+        all_spaces = conn.execute(select(embedding_spaces)).all()
+    current = {r.role: r for r in all_spaces if roles.get(r.role) == r.model_key}
+    done = 0
+    for role, space in current.items():
+        if space.status == "filling":
+            if signature != graph.signature or _role_busy(dbs, graph, role):
+                continue
+            with dbs.index.write() as conn:
+                conn.execute(
+                    embedding_spaces.update()
+                    .where(embedding_spaces.c.space_id == space.space_id)
+                    .values(status="complete", completed_at=now or utcnow())
+                )
+            done += 1
+            log.info(
+                "embedding space complete",
+                extra={"fields": {"role": role, "model": space.model}},
+            )
+        if not any(r.role == role and r.space_id != space.space_id for r in all_spaces):
+            continue
+        with dbs.index.write() as conn:
+            removed = conn.execute(
+                embedding_spaces.delete().where(
+                    embedding_spaces.c.role == role,
+                    embedding_spaces.c.space_id != space.space_id,
+                )
+            ).rowcount
+        if removed:
+            log.info(
+                "old embedding spaces deleted", extra={"fields": {"role": role, "spaces": removed}}
+            )
+    return done
+
+
+def _role_busy(dbs: Databases, graph: StageGraph, role: str) -> bool:
+    types = [PLAN_JOB, FULL_JOB] + [
+        stage_job_type(name) for name, stage in graph.stages.items() if role in stage.roles
+    ]
+    with dbs.state.read() as conn:
+        busy = conn.execute(
+            select(jobs.c.job_id)
+            .where(jobs.c.type.in_(types), jobs.c.status.in_(("queued", "running")))
+            .limit(1)
+        ).scalar()
+    return busy is not None
 
 
 # --- small tables -----------------------------------------------------------------

@@ -15,14 +15,20 @@
    `local_fallback` (chat surfaces do; background jobs don't), which is then used and
    reported. Never a silent re-route.
 
+An endpoint that just failed is treated as down for a while (30 s, doubling up to
+15 min, reset by a success): calls fail fast with `ModelUnavailable` instead of each
+waiting for a timeout.
+
 Logs carry roles, endpoint names, counts and levels, never content.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
-from collections.abc import Collection
+import time
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -33,11 +39,15 @@ from steward.core.llm.transport import (
     ModelRequest,
     ModelResponse,
     ModelTransport,
+    ModelUnavailable,
     OpenAICompatibleTransport,
 )
 from steward.core.privacy import Classifier, PrivacyRules
 
 log = logging.getLogger(__name__)
+
+BREAKER_FIRST_S = 30.0
+BREAKER_MAX_S = 900.0
 
 type Purpose = Literal["index", "chat"]
 """`index`: background processing (results stay in the index). `chat`: the answer is
@@ -80,15 +90,21 @@ class Gateway:
         state_db: Database,
         privacy: PrivacyRules,
         transport: ModelTransport | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
         self.state_db = state_db
         self.privacy = privacy
         self.transport = transport if transport is not None else OpenAICompatibleTransport()
+        self.clock = clock
         self._slots = {
             name: threading.BoundedSemaphore(ep.max_concurrency)
             for name, ep in config.endpoints.items()
         }
+        self._lock = threading.Lock()
+        self._down: dict[str, tuple[float, float]] = {}
+        """Endpoint -> (down until, current back-off) after a failure."""
 
     def has_role(self, role: str) -> bool:
         return role in self.config.roles
@@ -163,16 +179,60 @@ class Gateway:
         }
         if route.switched_from:
             fields["switched_from"] = route.switched_from
+        name = route.endpoint_name
+        wait = self.down_for(name)
+        if wait > 0:
+            raise ModelUnavailable(
+                f"endpoint {name!r} failed recently; trying again in {wait:.0f} s",
+                retry_after_s=wait,
+            )
         log.info("model call", extra={"fields": fields})
-        with self._slots[route.endpoint_name]:
-            response = self.transport.send(route.endpoint, route.model, request)
+        try:
+            with self._slots[name]:
+                response = self.transport.send(route.endpoint, route.model, request)
+        except ModelUnavailable as exc:
+            backoff = self._mark_down(name)
+            log.warning(
+                "model endpoint unavailable",
+                extra={"fields": {**fields, "error": str(exc), "retry_after_s": backoff}},
+            )
+            raise ModelUnavailable(str(exc), retry_after_s=backoff) from None
+        with self._lock:
+            self._down.pop(name, None)
         return GatewayResult(response, route)
+
+    def down_for(self, endpoint: str) -> float:
+        """Seconds until a failed endpoint is tried again (0: not known to be down)."""
+        with self._lock:
+            until, _ = self._down.get(endpoint, (0.0, 0.0))
+        return max(0.0, until - self.clock())
+
+    def _mark_down(self, endpoint: str) -> float:
+        with self._lock:
+            _, previous = self._down.get(endpoint, (0.0, 0.0))
+            backoff = min(BREAKER_MAX_S, previous * 2) if previous else BREAKER_FIRST_S
+            self._down[endpoint] = (self.clock() + backoff, backoff)
+        return backoff
+
+    def role_config(self, role: str) -> RoleConfig:
+        """The role's mapping; `RoleNotConfigured` if there is none."""
+        return self._role(role)
 
     def _role(self, role: str) -> RoleConfig:
         try:
             return self.config.roles[role]
         except KeyError:
             raise RoleNotConfigured(f"no model is configured for role {role!r}") from None
+
+
+def model_key(role: RoleConfig, *, embed: bool = False) -> str:
+    """What identifies the model's output for a role: the model name, and for embedding
+    roles the vector size and the document prefix. A stage's results made under another
+    key are recomputed."""
+    if not embed:
+        return role.model
+    prefix = hashlib.sha256(role.document_prefix.encode()).hexdigest()[:8]
+    return f"{role.model}|{role.dims or '?'}|{prefix}"
 
 
 def check_llm_config(config: LlmConfig) -> None:

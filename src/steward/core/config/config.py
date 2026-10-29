@@ -351,6 +351,15 @@ class RoleConfig(_Strict):
     local_fallback: str | None = None
     """A role on a `local` endpoint to use instead when the request may not go to this
     role's endpoint (chat surfaces offer this; background jobs wait instead)."""
+    query_prefix: str = Field("", max_length=1000)
+    """Embedding roles: text put in front of a search query before it's embedded (many
+    embedding models want an instruction there)."""
+    document_prefix: str = Field("", max_length=1000)
+    """Embedding roles: text put in front of each indexed chunk. Changing it re-embeds
+    everything."""
+    min_similarity: float = Field(0.4, ge=-1, le=1)
+    """Embedding roles: files whose best chunk is less similar to the query (cosine) are
+    not search results by meaning. Depends on the model."""
 
 
 class LlmConfig(_ConfigFile):

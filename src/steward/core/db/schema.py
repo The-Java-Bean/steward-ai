@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Table,
     Text,
@@ -323,6 +324,47 @@ chunks = Table(
 )
 """Retrieval units. `chunks_fts` (FTS5, external content, synced by triggers) indexes
 `heading` and `body`; it isn't described here because SQLAlchemy has no FTS5 tables."""
+
+# --- embeddings (index revision 0005) ----------------------------------------------
+
+embedding_spaces = Table(
+    "embedding_spaces",
+    index_metadata,
+    Column("space_id", Integer, primary_key=True, autoincrement=True),
+    Column("role", Text, nullable=False),
+    Column("endpoint", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("dims", Integer, nullable=False),
+    Column("model_key", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    Column("completed_at", UTCDateTime),
+    UniqueConstraint("role", "model_key", name="uq_embedding_spaces_key"),
+    CheckConstraint("status IN ('filling', 'complete')", name="ck_embedding_spaces_status"),
+)
+"""One per (role, model key): vectors from different models can't be compared. The
+space of the role's current model is the one searched (docs/adr/0023)."""
+
+embeddings = Table(
+    "embeddings",
+    index_metadata,
+    Column(
+        "space_id",
+        Integer,
+        ForeignKey("embedding_spaces.space_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "chunk_id",
+        Integer,
+        ForeignKey("chunks.chunk_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("vector", LargeBinary, nullable=False),
+    Index("ix_embeddings_chunk", "chunk_id"),
+)
+"""One L2-normalized float32 vector per chunk and space (searched with sqlite-vec's
+distance functions)."""
 
 # --- auth and runtime settings (state revision 0004) -------------------------------
 

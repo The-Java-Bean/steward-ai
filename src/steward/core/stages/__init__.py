@@ -6,6 +6,7 @@ from steward.core.stages.graph import StageGraph, StageGraphError, build_graph
 from steward.core.stages.jobs import (
     FULL_JOB,
     PLAN_JOB,
+    complete_spaces,
     enqueue_full_pass,
     full_pass_needed,
     register_hash_stage,
@@ -21,6 +22,7 @@ __all__ = [
     "StageGraph",
     "StageGraphError",
     "build_graph",
+    "complete_spaces",
     "enqueue_full_pass",
     "full_pass_needed",
     "register_hash_stage",

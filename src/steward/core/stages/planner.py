@@ -9,7 +9,8 @@ repair anything missed (docs/adr/0011-stage-framework.md).
 For each content hash, a stage is **wanted** when at least one present file with that
 content is in a folder where the stage is enabled (folder `index` policy and type
 `stages` add/remove) and `applies_to` says yes. A result is **current** when it was made
-by the stage's current version after every input it read was last recomputed; it's
+by the stage's current version (and, for stages that call a model, the current model)
+after every input it read was last recomputed; it's
 **usable** when it's current and `done`. A stage is **pending** when it's wanted, not
 current, and each stage it requires is usable or pending itself. A pending stage is
 queued once every stage it requires is usable and none of its optional inputs is
@@ -49,6 +50,7 @@ class RunRecord:
     stage_version: int
     status: str
     updated_at: datetime
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,8 +179,10 @@ def run_status(graph: StageGraph, runs: Mapping[str, RunRecord]) -> tuple[set[st
         else:
             ups = graph.upstream(name)
             optional = [up for up in graph.optional_upstream(name) if up in current]
+            key = graph.model_keys.get(name)
             ok = (
                 run.stage_version == stage.version
+                and (key is None or run.model == key)
                 and all(up in usable for up in ups)
                 and all(runs[up].updated_at <= run.updated_at for up in (*ups, *optional))
             )
@@ -230,9 +234,12 @@ class Planner:
                     stage_runs.c.stage_version,
                     stage_runs.c.status,
                     stage_runs.c.updated_at,
+                    stage_runs.c.model,
                 ).where(stage_runs.c.content_hash.in_(hashes))
             ):
-                runs[r.content_hash][r.stage] = RunRecord(r.stage_version, r.status, r.updated_at)
+                runs[r.content_hash][r.stage] = RunRecord(
+                    r.stage_version, r.status, r.updated_at, r.model
+                )
         return policy, by_hash, blob_rows, runs
 
     @staticmethod

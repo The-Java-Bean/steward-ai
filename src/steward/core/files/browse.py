@@ -37,7 +37,7 @@ from steward.core.executor.guarded import (
 from steward.core.folders import FolderRef, PathError
 from steward.core.folders.policy import FolderMapping, Policy
 from steward.core.privacy.sharing import SharingRules
-from steward.core.search import SearchError, SearchFilters, Visibility, search_all
+from steward.core.search import Embed, SearchError, SearchFilters, Visibility, search_all
 from steward.sdk import ActionRefused
 from steward.sdk.web import (
     Crumb,
@@ -135,11 +135,19 @@ class ZipMember:
 class Browser:
     """Read access to the libraries for one policy snapshot."""
 
-    def __init__(self, dbs: Databases, policy: Policy, shared: SharedArea | None = None) -> None:
+    def __init__(
+        self,
+        dbs: Databases,
+        policy: Policy,
+        shared: SharedArea | None = None,
+        embed: Embed | None = None,
+    ) -> None:
         self.dbs = dbs
         self.policy = policy
         self.visibility = Visibility(policy)
         self.shared = shared
+        self.embed = embed
+        """Embeds queries for searching by meaning (None: words and names only)."""
 
     # --- paths and scope ---------------------------------------------------------------
 
@@ -283,6 +291,7 @@ class Browser:
             scope=scope,
             limit=limit,
             offset=offset,
+            embed=self.embed if self.shared is None else None,
         )
         entries = tuple(
             Entry(
@@ -296,6 +305,7 @@ class Browser:
                 file_kind=h.kind,
                 snippet=h.snippet,
                 page=h.page,
+                semantic=h.semantic,
             )
             for h in results.hits
         )

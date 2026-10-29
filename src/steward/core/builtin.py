@@ -139,3 +139,47 @@ def register_uploads(registrations: Registrations, runtime: Callable[[], Runtime
 
     r.job(UPLOADS_EXPIRE_JOB, run, lane="executor")
     r.schedule(UPLOADS_EXPIRE_JOB, Every(timedelta(hours=1)), job=UPLOADS_EXPIRE_JOB)
+
+
+def register_models(registrations: Registrations, runtime: Callable[[], Runtime]) -> None:
+    """Health checks for model roles and embeddings (docs/adr/0023). Registered after
+    the stage graph is built, because they report what it left out."""
+    from steward.core import embeddings
+
+    r = Registry("core", None, registrations)
+
+    async def models() -> HealthResult:
+        graph = runtime().stages
+        if not graph.roles:
+            return HealthResult("ok", "no enabled module uses a model")
+        off = []
+        for name, state in graph.roles.items():
+            if state.usable:
+                continue
+            stages = sorted(s for s in graph.inactive if f"role {name!r}" in graph.inactive[s])
+            what = f", so {', '.join(stages)} doesn't run" if stages else ""
+            off.append(f"role {name!r} ({', '.join(state.modules)}) is {state.problem}{what}")
+        if off:
+            return HealthResult("warn", "; ".join(off))
+        mapped = ", ".join(f"{n} → {s.model}" for n, s in sorted(graph.roles.items()))
+        return HealthResult("ok", mapped)
+
+    async def spaces() -> HealthResult:
+        rt = runtime()
+        roles = [s for s in rt.stages.roles.values() if s.kind == "embed" and s.usable]
+        if not roles:
+            return HealthResult("ok", "no embedding model is set up; search works by words")
+        parts = []
+        with rt.dbs.index.read() as conn:
+            for state in roles:
+                space = embeddings.find_space(conn, state.name, state.model_key or "")
+                if space is None:
+                    parts.append(f"{state.name}: nothing embedded yet")
+                    continue
+                n = embeddings.count(conn, space.space_id)
+                status = "complete" if space.status == "complete" else "filling"
+                parts.append(f"{state.name}: {n} passages embedded with {space.model} ({status})")
+        return HealthResult("ok", "; ".join(parts))
+
+    r.health_check("core.models", models)
+    r.health_check("core.embeddings", spaces)

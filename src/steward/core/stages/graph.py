@@ -6,6 +6,11 @@ Built once at startup from the registrations. Fails closed (stops startup) if tw
 stages produce the same artifact kind, a stage requires a kind nobody produces, or the
 inputs (required and optional) form a cycle. An optional input nobody produces is
 simply never there.
+
+Stages that call a model role nobody mapped in `llm.yaml` are left out (`inactive`,
+with the reason), and so is every stage that requires their output. The signature
+includes the model each stage's roles map to, so mapping a role or changing its model
+triggers a full planning pass (docs/adr/0023).
 """
 
 from __future__ import annotations
@@ -13,10 +18,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 
 from steward.core.discovery.hashing import HASH_STAGE
+from steward.core.llm.roles import RoleState
 from steward.core.loader import ModuleLoadError
 from steward.sdk import Stage
 
@@ -31,6 +37,12 @@ class StageGraph:
     """Every stage, in dependency order (the root `core.hash` first)."""
     producers: Mapping[str, str]
     """Artifact kind -> the stage that produces it."""
+    inactive: Mapping[str, str] = field(default_factory=dict)
+    """Registered stages left out of the graph -> why (a role isn't mapped…)."""
+    model_keys: Mapping[str, str] = field(default_factory=dict)
+    """Stage -> the models its roles map to (`role=key,…`); results made under another
+    key aren't current. Only stages with roles."""
+    roles: Mapping[str, RoleState] = field(default_factory=dict)
 
     @property
     def root(self) -> str:
@@ -69,14 +81,54 @@ class StageGraph:
         shape = [
             [s.name, s.version, s.requires, s.produces, s.lane, s.default, s.index]
             + ([s.optional] if s.optional else [])
+            + ([self.model_keys.get(s.name, "")] if s.roles else [])
             for s in self.stages.values()
         ]
         return hashlib.sha256(json.dumps(shape).encode()).hexdigest()
 
 
-def build_graph(stages: Mapping[str, Stage]) -> StageGraph:
+def _role_filter(
+    stages: Mapping[str, Stage], roles: Mapping[str, RoleState]
+) -> tuple[dict[str, Stage], dict[str, str], dict[str, str]]:
+    """(active stages, inactive stage -> reason, stage -> model key)."""
+    inactive: dict[str, str] = {}
+    keys: dict[str, str] = {}
+    for stage in stages.values():
+        for role in stage.roles:
+            if role not in roles:
+                raise StageGraphError(
+                    f"stage {stage.name!r} uses role {role!r}, which no enabled module declares"
+                )
+        problems = [f"role {r!r} is {roles[r].problem}" for r in stage.roles if roles[r].problem]
+        if problems:
+            inactive[stage.name] = "; ".join(problems)
+        elif stage.roles:
+            keys[stage.name] = ",".join(f"{r}={roles[r].model_key}" for r in sorted(stage.roles))
+    while True:
+        made = {k: s.name for s in stages.values() if s.name not in inactive for k in s.produces}
+        lost = {
+            s.name: f"needs {k!r}, made by inactive stage {p!r}"
+            for s in stages.values()
+            if s.name not in inactive
+            for k in s.requires
+            if k not in made
+            for p in [next((o.name for o in stages.values() if k in o.produces), None)]
+            if p is not None
+        }
+        if not lost:
+            break
+        inactive.update(lost)
+    active = {name: s for name, s in stages.items() if name not in inactive}
+    return active, inactive, {k: v for k, v in keys.items() if k in active}
+
+
+def build_graph(
+    stages: Mapping[str, Stage], roles: Mapping[str, RoleState] | None = None
+) -> StageGraph:
     if HASH_STAGE not in stages:
         raise StageGraphError(f"the root stage {HASH_STAGE!r} is not registered")
+    roles = roles or {}
+    stages, inactive, model_keys = _role_filter(stages, roles)
     producers: dict[str, str] = {}
     for stage in stages.values():
         for kind in stage.produces:
@@ -112,4 +164,10 @@ def build_graph(stages: Mapping[str, Stage]) -> StageGraph:
         # Only possible if another stage requires nothing; the root still goes first.
         order.remove(HASH_STAGE)
         order.insert(0, HASH_STAGE)
-    return StageGraph({name: stages[name] for name in order}, producers)
+    return StageGraph(
+        {name: stages[name] for name in order},
+        producers,
+        inactive=inactive,
+        model_keys=model_keys,
+        roles=roles,
+    )

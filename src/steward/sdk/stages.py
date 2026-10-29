@@ -26,6 +26,7 @@ from typing import BinaryIO, Literal, Protocol
 from sqlalchemy import Connection
 
 from steward.sdk.jobs import Lane
+from steward.sdk.models import StageModel
 
 IndexPolicy = Literal["full", "metadata", "none"]
 """How much of a folder steward-ai reads: contents, only names and metadata, or nothing."""
@@ -205,6 +206,21 @@ class StageContext(Protocol):
         from. Chunks are full-text searchable at once."""
         ...
 
+    def model(self, role: str) -> StageModel:
+        """The model mapped to `role` (one of this stage's `roles`). Every call carries
+        the files holding this content as provenance, through the privacy gateway.
+        Raises `ModelUnavailable` when the server can't be reached (the job waits)."""
+        ...
+
+    def write_embeddings(
+        self, vectors: Sequence[Sequence[float]], *, role: str, source: str = "chunks"
+    ) -> None:
+        """Store one vector per chunk of `source` (in `read_chunks(source)` order), made
+        by `role`'s model, replacing earlier vectors of this content in that model's
+        embedding space. Used for semantic search (the stage must produce
+        `embeddings`)."""
+        ...
+
 
 StageRunner = Callable[[StageContext], StageResult | None]
 """Runs in a worker thread on the stage's lane. Raise to fail (retried with backoff;
@@ -240,6 +256,10 @@ class Stage:
     """Artifact kinds read when available: the stage waits while their producer still
     has to run for the content, runs without them where it doesn't (or no enabled
     stage produces them), and runs again when they're recomputed."""
+    roles: tuple[str, ...] = ()
+    """Model roles the stage calls (`StageContext.model`). While one isn't mapped to a
+    model in `llm.yaml` the stage doesn't run (nor do stages requiring its output);
+    mapping it, or changing its model, runs it again everywhere."""
 
     @property
     def short_name(self) -> str:

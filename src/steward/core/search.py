@@ -7,7 +7,11 @@
 - **Text** (`search_text`): every word must appear in one chunk of the file's extracted
   text (FTS5, accents and case ignored); files rank by their best chunk (BM25, headings
   count double), and each hit carries a snippet of that chunk.
-- **Both** (`search_all`): the two rankings merged by reciprocal rank fusion.
+- **Meaning** (in `search_all`, when an embedding model is set up): the files whose
+  best chunk is closest to the query's embedding (cosine, above the role's
+  `min_similarity`, top 50), compared with sqlite-vec's `vec_distance_cosine`.
+- **All** (`search_all`): the rankings merged by reciprocal rank fusion. `text` mode
+  merges words and meaning; `all` adds names.
 
 Filters (all modes): library, folder, kind, size and modification time.
 
@@ -21,15 +25,18 @@ What can be found depends on the scope, and is decided **in the SQL query**:
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 import sqlite3
 import unicodedata
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from steward.core.db import Databases
+from steward.core.embeddings import VectorQuery, load_vec
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import COPY_HOLDING_ROLES, Policy
 from steward.core.folders.store import STEWARD_DIR
@@ -39,6 +46,10 @@ type Scope = Literal["normal", "locked"]
 type Mode = Literal["all", "names", "text"]
 type Snippet = tuple[tuple[str, bool], ...]
 """Text segments and whether each one matched the query."""
+type Embed = Callable[[str], VectorQuery | None]
+"""Turns a query into a vector (`core.embeddings.QueryEmbedder`); may raise."""
+
+log = logging.getLogger(__name__)
 
 MAX_TOKENS = 10
 MAX_TOKEN_LENGTH = 200
@@ -48,6 +59,8 @@ RANK_CAP = 1000
 """How deep `search_all` looks into each ranking (pages beyond this aren't offered)."""
 RRF_K = 60
 SNIPPET_TOKENS = 24
+PREVIEW_CHARS = 240
+"""Length of the chunk start shown for files found only by meaning."""
 START, END = MATCH_MARKERS
 
 
@@ -81,6 +94,8 @@ class SearchHit:
     """From the best matching chunk, for text matches."""
     page: int | None = None
     """The page of the best matching chunk, if the document has pages."""
+    semantic: bool = False
+    """Found only by meaning (no word matched its name or text)."""
 
     @property
     def name(self) -> str:
@@ -102,6 +117,7 @@ class SearchHit:
             "mime": self.mime,
             "snippet": "".join(text for text, _ in self.snippet) or None,
             "page": self.page,
+            "semantic": self.semantic,
         }
 
 
@@ -111,6 +127,9 @@ class SearchResults:
     total: int
     """Number of matches, counted up to `COUNT_CAP`."""
     capped: bool
+    semantic: bool | None = None
+    """Whether searching by meaning was part of it: None when it isn't set up (or the
+    mode has no text), False when the model couldn't be reached."""
 
 
 def fold(text: str | None) -> str | None:
@@ -458,6 +477,47 @@ def search_text(
 # --- both ----------------------------------------------------------------------------
 
 
+_NEAREST = (
+    "SELECT c.content_hash AS h, min(vec_distance_cosine(e.vector, ?)) AS dist, "
+    "c.chunk_id AS chunk_id, c.page AS page "
+    "FROM idx.embeddings e JOIN idx.chunks c ON c.chunk_id = e.chunk_id "
+    "WHERE e.space_id = ? GROUP BY c.content_hash"
+)
+"""Closest chunk per content in one embedding space."""
+
+
+def _query_vector(embed: Embed | None, query: str) -> tuple[VectorQuery | None, bool | None]:
+    """(vector, semantic flag). Never raises: search works without the model."""
+    if embed is None:
+        return None, None
+    try:
+        vector = embed(query)
+    except Exception as exc:
+        log.warning(
+            "query embedding failed; searching by words only",
+            extra={"fields": {"error": type(exc).__name__}},
+        )
+        return None, False
+    return vector, (True if vector is not None else None)
+
+
+def _previews(conn: sqlite3.Connection, chunk_ids: Sequence[int]) -> dict[int, Snippet]:
+    if not chunk_ids:
+        return {}
+    marks = ", ".join("?" for _ in chunk_ids)
+    rows = conn.execute(
+        f"SELECT chunk_id, substr(body, 1, ?) FROM idx.chunks WHERE chunk_id IN ({marks})",  # noqa: S608 -- only placeholders are interpolated
+        [PREVIEW_CHARS + 1, *chunk_ids],
+    ).fetchall()
+    found: dict[int, Snippet] = {}
+    for chunk_id, body in rows:
+        text = " ".join(str(body).split())
+        if len(text) > PREVIEW_CHARS:
+            text = text[:PREVIEW_CHARS].rsplit(" ", 1)[0] + " …"
+        found[int(chunk_id)] = ((text, False),) if text else ()
+    return found
+
+
 def search_all(
     dbs: Databases,
     policy: Policy,
@@ -468,67 +528,118 @@ def search_all(
     limit: int = 50,
     offset: int = 0,
     mode: Mode = "all",
+    embed: Embed | None = None,
 ) -> SearchResults:
-    """Names and text, merged by reciprocal rank fusion (each file once; text hits keep
-    their snippet). `mode` picks one side instead. Without searchable words this is a
-    name search (every file the filters allow)."""
+    """Names, words in the text and (with `embed`) meaning, merged by reciprocal rank
+    fusion: each file once, text hits keep their snippet. `mode` `names` searches names
+    only, `text` words and meaning. Without searchable words this is a name search
+    (every file the filters allow)."""
     if mode == "names":
         return search_files(
-            dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
-        )
-    if mode == "text":
-        return search_text(
             dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
         )
     words = tokens(query)
     match = fts_query(words)
     if match is None:
+        if mode == "text":
+            return SearchResults([], 0, capped=False)
         return search_files(
             dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
         )
     _check_limits(limit, offset)
+    vector, semantic = _query_vector(embed, query)
+    if vector is None and mode == "text":
+        found = search_text(
+            dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
+        )
+        return SearchResults(found.hits, found.total, found.capped, semantic)
     conditions = _conditions(policy, filters, scope)
     if conditions is None or offset >= RANK_CAP:
-        return SearchResults([], 0, capped=False)
+        return SearchResults([], 0, capped=False, semantic=semantic)
     depth = min(offset + limit, RANK_CAP)
     where, args = conditions
-    name_from, name_args, name_order, order_args = _name_query(words, where, args)
-    text_from, text_args = _text_query(match, where, args)
     with _connect(dbs) as conn:
-        by_name = conn.execute(
-            f"SELECT {FILE_COLUMNS} {name_from} ORDER BY {name_order} LIMIT ?",
-            [*name_args, *order_args, depth],
-        ).fetchall()
+        rankings: list[list[Sequence[Any]]] = []
+        either: list[str] = []
+        either_args: list[Any] = []
+        by_name: list[Sequence[Any]] = []
+        if mode == "all":
+            name_from, name_args, name_order, order_args = _name_query(words, where, args)
+            by_name = conn.execute(
+                f"SELECT {FILE_COLUMNS} {name_from} ORDER BY {name_order} LIMIT ?",
+                [*name_args, *order_args, depth],
+            ).fetchall()
+            rankings.append(by_name)
+            either.append(
+                "(" + " AND ".join("instr(steward_fold(f.relpath), ?) > 0" for _ in words) + ")"
+            )
+            either_args.extend(words)
+        text_from, text_args = _text_query(match, where, args)
         by_text = conn.execute(
             f"SELECT {FILE_COLUMNS}, m.chunk_id, m.page {text_from} "
             "ORDER BY m.score, f.mtime_ns DESC, f.relpath LIMIT ?",
             [*text_args, depth],
         ).fetchall()
-        name_cond = " AND ".join("instr(steward_fold(f.relpath), ?) > 0" for _ in words)
-        either = (
-            "FROM files f LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "  # noqa: S608 -- only placeholders are interpolated
-            f"WHERE {' AND '.join(where)} AND (({name_cond}) OR f.content_hash IN "
-            f"(SELECT h FROM ({_MATCHES})))"
+        rankings.append(by_text)
+        either.append(f"f.content_hash IN (SELECT h FROM ({_MATCHES}))")  # noqa: S608 -- constant SQL
+        either_args.append(match)
+        by_vector: list[Sequence[Any]] = []
+        if vector is not None:
+            if load_vec(conn):
+                by_vector = conn.execute(
+                    f"SELECT {FILE_COLUMNS}, v.chunk_id, v.page FROM ({_NEAREST}) v "  # noqa: S608 -- only placeholders are interpolated
+                    "JOIN files f ON f.content_hash = v.h "
+                    "LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "
+                    f"WHERE {' AND '.join(where)} AND v.dist <= ? "
+                    "ORDER BY v.dist, f.mtime_ns DESC, f.relpath LIMIT ?",
+                    [
+                        vector.vector,
+                        vector.space_id,
+                        *args,
+                        1.0 - vector.min_similarity,
+                        vector.depth,
+                    ],
+                ).fetchall()
+                rankings.append(by_vector)
+                if by_vector:
+                    either.append(f"f.file_id IN ({', '.join('?' for _ in by_vector)})")
+                    either_args.extend(r[0] for r in by_vector)
+            else:
+                semantic = False
+        total = _count(
+            conn,
+            "FROM files f LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "
+            f"WHERE {' AND '.join(where)} AND ({' OR '.join(either)})",
+            [*args, *either_args],
         )
-        total = _count(conn, either, [*args, *words, match])
         scores: dict[str, float] = {}
         rows: dict[str, Sequence[Any]] = {}
-        for rank, r in enumerate(by_name):
-            scores[r[0]] = scores.get(r[0], 0.0) + 1 / (RRF_K + rank + 1)
-            rows[r[0]] = r
+        for ranking in rankings:
+            for rank, r in enumerate(ranking):
+                scores[r[0]] = scores.get(r[0], 0.0) + 1 / (RRF_K + rank + 1)
+                rows.setdefault(r[0], r)
         text_rows = {r[0]: r for r in by_text}
-        for rank, r in enumerate(by_text):
-            scores[r[0]] = scores.get(r[0], 0.0) + 1 / (RRF_K + rank + 1)
-            rows.setdefault(r[0], r)
+        vector_rows = {r[0]: r for r in by_vector}
+        matched = {r[0] for r in by_name} | set(text_rows)
         ordered = sorted(scores, key=lambda fid: (-scores[fid], -rows[fid][4], rows[fid][2]))
         page = ordered[offset : offset + limit]
         snippets = _snippets(conn, match, [text_rows[f][7] for f in page if f in text_rows])
+        previews = _previews(
+            conn, [vector_rows[f][7] for f in page if f in vector_rows and f not in text_rows]
+        )
     hits = []
     for fid in page:
         t = text_rows.get(fid)
-        hits.append(_hit(rows[fid], snippets.get(t[7], ()) if t else (), t[8] if t else None))
+        v = vector_rows.get(fid)
+        if t is not None:
+            hits.append(_hit(rows[fid], snippets.get(t[7], ()), t[8]))
+        elif v is not None:
+            hit = _hit(rows[fid], previews.get(v[7], ()), v[8])
+            hits.append(dataclasses.replace(hit, semantic=fid not in matched))
+        else:
+            hits.append(_hit(rows[fid]))
     capped = total > COUNT_CAP or total > RANK_CAP
-    return SearchResults(hits, min(total, COUNT_CAP, RANK_CAP), capped=capped)
+    return SearchResults(hits, min(total, COUNT_CAP, RANK_CAP), capped=capped, semantic=semantic)
 
 
 def _ns(value: datetime) -> int:

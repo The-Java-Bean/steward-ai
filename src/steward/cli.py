@@ -72,6 +72,7 @@ user_app = typer.Typer(
 )
 tokens_app = typer.Typer(help="API tokens (scopes: read, propose).", no_args_is_help=True)
 journal_app = typer.Typer(help="Applied actions: list them and undo them.", no_args_is_help=True)
+models_app = typer.Typer(help="Model roles and the models mapped to them.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
 app.add_typer(jobs_app, name="jobs")
@@ -82,6 +83,7 @@ app.add_typer(stages_app, name="stages")
 app.add_typer(user_app, name="user")
 app.add_typer(tokens_app, name="tokens")
 app.add_typer(journal_app, name="journal")
+app.add_typer(models_app, name="models")
 
 CLI_ACTOR = "cli"
 
@@ -668,12 +670,16 @@ def stages_list() -> None:
         if stage.optional:  # read when available
             requires += f" [{', '.join(stage.optional)}]"
         flags = "" if stage.default else "  (only where a folder type adds it)"
+        if stage.roles:
+            flags += f"  (model roles: {', '.join(stage.roles)})"
         done = counts.get(name, {})
         status = "  ".join(f"{k} {v}" for k, v in sorted(done.items())) or "no results"
         typer.echo(
             f"{name} v{stage.version}  [{stage.lane}]  {requires} -> {', '.join(stage.produces)}"
             f"{flags}\n    {status}"
         )
+    for name, reason in sorted(runtime.stages.inactive.items()):
+        typer.echo(f"{name}  (not running: {reason})")
 
 
 @stages_app.command("plan")
@@ -685,6 +691,59 @@ def stages_plan() -> None:
             conn, max_attempts=runtime.config.pipeline.jobs.max_attempts
         )
     typer.echo(f"queued {stages.FULL_JOB} (job {job_id})")
+
+
+# --- models -------------------------------------------------------------------------
+
+
+@models_app.command("list")
+def models_list() -> None:
+    """Roles the enabled modules use, the model each is mapped to in llm.yaml, and the
+    stages that call them."""
+    runtime = _runtime()
+    graph = runtime.stages
+    if not graph.roles:
+        typer.echo("no enabled module uses a model role")
+    for name, state in graph.roles.items():
+        target = f"{state.endpoint}/{state.model}" if state.model else "not mapped"
+        problem = f"  ({state.problem})" if state.problem else ""
+        typer.echo(f"{name} [{state.kind}] -> {target}{problem}")
+        typer.echo(f"    {state.description} (declared by {', '.join(state.modules)})")
+        users = [s for s, st in graph.stages.items() if name in st.roles]
+        users += [s for s in graph.inactive if name in runtime.registrations.stages()[s].roles]
+        if users:
+            typer.echo(f"    stages: {', '.join(sorted(users))}")
+    unused = sorted(set(runtime.config.llm.roles) - set(graph.roles))
+    if unused:
+        typer.echo(f"mapped in llm.yaml but used by no enabled module: {', '.join(unused)}")
+
+
+@models_app.command("probe")
+def models_probe(
+    role: Annotated[str | None, typer.Argument(help="Only this role.")] = None,
+) -> None:
+    """Send test requests to each mapped role's model (no file content) and report
+    what works: embeddings and their size; replies, structured JSON, tool calls and
+    images for chat roles, as configured."""
+    from steward.core.llm import probe
+
+    runtime = _ready_runtime()
+    roles = runtime.config.llm.roles
+    names = [role] if role else sorted(roles)
+    if role and role not in roles:
+        _fail(f"role {role!r} isn't mapped in llm.yaml")
+    if not names:
+        _fail("llm.yaml maps no roles")
+    failed = False
+    for name in names:
+        state = runtime.stages.roles.get(name)
+        kind = state.kind if state else ("embed" if roles[name].dims else "chat")
+        typer.echo(f"{name} [{kind}] -> {roles[name].endpoint}/{roles[name].model}")
+        for check in probe.probe_role(runtime.gateway, name, kind):
+            failed |= not check.ok
+            typer.echo(f"    {'ok  ' if check.ok else 'FAIL'}  {check.name}: {check.detail}")
+    if failed:
+        raise typer.Exit(1)
 
 
 # --- user and tokens ----------------------------------------------------------------
@@ -959,11 +1018,15 @@ def search(
             filters=SearchFilters(library=library, folder=folder, kind=kind),
             limit=limit,
             mode=cast(Mode, mode),
+            embed=runtime.query_embedder,
         )
     except SearchError as exc:
         _fail(str(exc))
+    if results.semantic is False:
+        typer.echo("(the embedding model can't be reached: searched by words only)", err=True)
     for hit in results.hits:
-        typer.echo(f"{hit.library_id}:{hit.relpath}  {hit.size} B  {hit.kind or '-'}")
+        meaning = "  [by meaning]" if hit.semantic else ""
+        typer.echo(f"{hit.library_id}:{hit.relpath}  {hit.size} B  {hit.kind or '-'}{meaning}")
         if hit.snippet:
             page = f"p. {hit.page}: " if hit.page else ""
             typer.echo(f"    {page}{''.join(t if not m else f'[{t}]' for t, m in hit.snippet)}")

@@ -81,6 +81,7 @@ def search_page(
                 limit=50,
                 offset=(page - 1) * 50,
                 mode=mode,
+                embed=runtime.query_embedder,
             )
         except SearchError as exc:
             context["error"] = str(exc)

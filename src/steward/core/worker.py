@@ -23,7 +23,7 @@ from steward.core import events, queue, scheduler, stages
 from steward.core.db import utcnow
 from steward.core.discovery.ioprio import set_idle_io_priority
 from steward.core.runtime import Runtime
-from steward.sdk import WORKER_LANES, JobContext, Lane, PermanentJobError
+from steward.sdk import WORKER_LANES, JobContext, Lane, PermanentJobError, RetryLater
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +80,20 @@ class Worker:
         ctx = JobContext(job.job_id, job.type, job.payload, job.attempts, renew_lease, state)
         try:
             self.job_types[job.type].handler(ctx)
+        except RetryLater as exc:
+            with state.write() as conn:
+                queue.postpone(
+                    conn,
+                    job.job_id,
+                    worker_id=self.worker_id,
+                    delay=timedelta(seconds=exc.delay_s),
+                    reason=exc.reason,
+                )
+            log.info(
+                "job postponed",
+                extra={"fields": {**fields, "reason": exc.reason, "delay_s": exc.delay_s}},
+            )
+            return True
         except Exception as exc:
             permanent = isinstance(exc, PermanentJobError)
             with state.write() as conn:
@@ -126,6 +140,7 @@ class Worker:
             )
         for name in fired:
             log.info("schedule fired", extra={"fields": {"schedule": name}})
+        stages.complete_spaces(self.runtime.dbs, self.runtime.stages, now=now)
 
     def drain(self, *, max_jobs: int = 10_000) -> int:
         """Housekeeping, then run jobs on every lane until none are runnable. Synchronous;

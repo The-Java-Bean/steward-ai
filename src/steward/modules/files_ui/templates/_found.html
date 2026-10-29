@@ -4,7 +4,7 @@
   <tbody>
   {% for e in found.entries %}{% set folder = e.path.rsplit('/', 1)[0] if '/' in e.path else e.path.split(':')[0] ~ ':' %}
     <tr>
-      <td><a href="{{ base }}/view?path={{ e.path|urlencode }}">{{ e.name }}</a>
+      <td><a href="{{ base }}/view?path={{ e.path|urlencode }}">{{ e.name }}</a>{% if e.semantic %} <span class="related">related</span>{% endif %}
         {% if e.snippet %}<p class="snippet">{% if e.page %}<span class="page">p. {{ e.page }}</span> {% endif %}{% for text, hit in e.snippet %}{% if hit %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>{% endif %}</td>
       <td><a href="{{ base }}?path={{ folder|urlencode }}"><code>{{ folder }}</code></a></td>
       <td class="num">{{ e.size|filesizeformat }}</td>

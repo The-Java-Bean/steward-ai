@@ -7,6 +7,15 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `search_all`, `/ui/search`, `/api/v1/search`, the Locked Folder search and `steward
+  search` also find files by meaning when an embedding model is set up: `in=text` is
+  words + meaning, `in=all` adds names. Results found only by meaning are marked
+  ("related"; `semantic` in the API, `[by meaning]` in the CLI); `/api/v1/search` says
+  whether meaning was used (`semantic`). If the model can't be reached, search uses
+  words only.
+- `steward stages list` shows the model roles a stage uses and the stages that don't run
+  (and why).
+- `ModelUnavailable` moved to the SDK (`steward.core.llm` re-exports it).
 - `documents.chunk` reads the OCR text when there is some, else the extracted text, and
   records `skipped` ("no text") when there's nothing to chunk.
 - The container image includes Tesseract 5 (English); license files of the Debian
@@ -23,6 +32,26 @@ All notable changes to steward-ai are recorded here. The format follows
   and other office files were typed as zip archives in the container image.
 
 ### Added
+- Searching by meaning (ADR 0023). New built-in module `search` (on by default):
+  declares the model role `embed` and stage `search.embed`, which embeds every chunk
+  (settings `batch_size`, `max_chunks`). Without a model mapped to `embed` the stage
+  doesn't run; mapping one, or changing it, embeds everything in the background.
+  Vectors live in `index.db` (revision `0005`: `embedding_spaces`, `embeddings`), one
+  space per model; the old space is deleted once the new one is complete.
+- SDK: model roles. `Registry.model_role(role, kind=, description=, vision=)`,
+  `Registry.stage(..., roles=...)`, `StageContext.model(role)` (`embed`, `chat`,
+  `structured` with Pydantic validation and retries), `StageContext.write_embeddings`,
+  `ModelRole`, `StageModel`, `StructuredOutputError`, `ModelUnavailable`, and
+  `RetryLater` (re-queue a job without using an attempt). Stages needing a role that
+  isn't mapped don't run; the health check `core.models` says so.
+- `llm.yaml` role settings `query_prefix`, `document_prefix` and `min_similarity`
+  (embedding roles).
+- The model gateway treats an endpoint that just failed as down for a while (30 s,
+  doubling up to 15 min) instead of waiting for a timeout on every call.
+- CLI `steward models list` and `steward models probe [ROLE]`.
+- Health check `core.embeddings` (what has been embedded, with which model).
+- Dependency: `sqlite-vec` (vector distance in SQLite; MIT or Apache-2.0). Its wheel
+  has no license file, so the image writes a note in `/licenses/python/sqlite-vec/`.
 - OCR (ADR 0022): stage `documents.ocr` reads scanned PDF pages (pages without enough
   text that hold an image; every page where a folder type adds `ocr`) and images (PNG,
   JPEG, TIFF, BMP, GIF, WebP) with Tesseract, so they're found by full-text search.

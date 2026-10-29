@@ -4,8 +4,8 @@
 (docs/adr/0002, 0004); everything else goes through `Gateway.call`.
 
 The built-in transport speaks the OpenAI-compatible HTTP API with the standard library
-(non-streaming chat completions and embeddings). Streaming and structured output come
-with the chat and indexing features.
+(non-streaming chat completions and embeddings). Streaming comes with the chat feature;
+structured output is built on chat requests (`structured.py`).
 """
 
 from __future__ import annotations
@@ -19,11 +19,17 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from steward.core.config import EndpointConfig
+from steward.sdk import ModelUnavailable
 
-
-class ModelUnavailable(Exception):
-    """The endpoint couldn't be reached or answered with an error; the job should wait
-    and retry, never fall back to another endpoint (plan §3.13)."""
+__all__ = [
+    "ChatRequest",
+    "EmbedRequest",
+    "ModelRequest",
+    "ModelResponse",
+    "ModelTransport",
+    "ModelUnavailable",
+    "OpenAICompatibleTransport",
+]
 
 
 @dataclass(frozen=True)
@@ -31,11 +37,14 @@ class ChatRequest:
     messages: Sequence[Mapping[str, Any]]
     options: Mapping[str, Any] = field(default_factory=dict)
     """Extra request fields (`temperature`, `response_format`, `tools`...)."""
+    timeout_s: float | None = None
+    """Overrides the endpoint's timeout (interactive requests use a short one)."""
 
 
 @dataclass(frozen=True)
 class EmbedRequest:
     inputs: Sequence[str]
+    timeout_s: float | None = None
 
 
 type ModelRequest = ChatRequest | EmbedRequest
@@ -92,7 +101,8 @@ class OpenAICompatibleTransport:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(http_request, timeout=endpoint.timeout_s) as response:  # noqa: S310
+            timeout = request.timeout_s or endpoint.timeout_s
+            with urllib.request.urlopen(http_request, timeout=timeout) as response:  # noqa: S310
                 data = json.loads(response.read())
         except urllib.error.HTTPError as exc:
             raise ModelUnavailable(f"endpoint answered HTTP {exc.code}") from None

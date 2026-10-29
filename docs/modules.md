@@ -83,7 +83,8 @@ Every name a module registers is the module's name or starts with `<module>.`
 | `job(name, handler, lane=...)` | a background job type; `handler(ctx: JobContext)` runs in a worker thread |
 | `subscribe(event_type, handler, name=...)` | a reaction to events such as `file.discovered`; `handler(event: Event)` (core file events: `file.discovered`, `file.changed`, `file.moved`, `file.reappeared`, `file.missing`; payloads hold `file_id`, `library_id`, `relpath` and, once hashed, `content_hash`, `size`, `mime`) |
 | `schedule(name, Every(...) \| Daily(...), job=..., payload=...)` | a recurring job; owners can re-time or turn it off in `pipeline.yaml` |
-| `stage(name, run, version=, produces=, requires=, optional=, lane=, applies_to=, default=, index=)` | a pipeline stage; see "Stages" below |
+| `stage(name, run, version=, produces=, requires=, optional=, lane=, applies_to=, default=, index=, roles=)` | a pipeline stage; see "Stages" below |
+| `model_role(role, kind="chat" \| "embed", description=, vision=False)` | a model role your stages call (names are shared, not prefixed); see "Model roles" below |
 | `migrations(path, database="state" \| "index")` | a directory of Alembic revisions creating `<module>_*` tables |
 | `ui_page(name, router, path=, title=, nav=True, templates=, static=, badge=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; `badge(state) -> int` puts a count next to its navigation entry; see "UI pages" below |
 | `share_links(handler)` | answer the public share links `/s/<token>…` (one module at most); see "Share links" below |
@@ -232,6 +233,63 @@ exception's class name; messages are never passed on, since they can quote conte
 The child leads its own process group and the whole group is killed afterwards, so
 programs `fn` starts (`subprocess.run(["tesseract", …])`) inherit the limits and can't
 outlive it.
+
+### Model roles
+
+Stages never name a model. Declare the **role** you need and list it in the stage's
+`roles`; the owner maps roles to models in `llm.yaml`
+([ADR 0023](adr/0023-model-roles-and-semantic-search.md)):
+
+```python
+from pydantic import BaseModel
+
+from steward.sdk import Registry, StageContext, StageResult
+
+
+class Topic(BaseModel):
+    topic: str
+
+
+def register(r: Registry) -> None:
+    r.model_role("summary", kind="chat", description="Names a document's topic")
+
+    def topic(ctx: StageContext) -> StageResult:
+        text = "\n".join(p.body for p in ctx.read_text())[:8000]
+        answer = ctx.model("summary").structured(
+            Topic, [{"role": "user", "content": f"What is this about?\n\n{text}"}]
+        )
+        ...  # store answer.topic in your own index tables
+        return StageResult()
+
+    r.stage(
+        "notes.topic",
+        topic,
+        version=1,
+        requires=("text",),
+        produces=("topic",),
+        lane="llm-local",
+        roles=("summary",),
+    )
+```
+
+- While a role isn't mapped (or a `vision=True` role's model lacks `capabilities:
+  [vision]`), the stage doesn't run, nor do stages that require its output; `steward
+  stages list` and the health page say why. Mapping the role, or changing its model,
+  runs the stage again everywhere (results remember the model).
+- `ctx.model(role)` offers `embed(texts)` (embedding roles; the role's
+  `document_prefix` is added), `chat(messages, options=)` and `structured(schema,
+  messages, retries=2)` (validated with Pydantic; invalid answers are retried with the
+  error, then `StructuredOutputError`).
+- Every call carries the files holding the content as provenance through the privacy
+  gateway. A call the privacy rules refuse makes the run `skipped`. When the server is
+  down, `ModelUnavailable` makes the job wait and retry later without using an attempt;
+  don't catch it.
+- Embeddings for search: a stage producing `embeddings` calls
+  `ctx.write_embeddings(vectors, role=..., source="chunks")` with one vector per chunk
+  of `source`, in `read_chunks(source)` order. The core keeps one space per model and
+  searches the current one.
+- In your own job handlers, raise `RetryLater(reason, delay_s=)` to run the job again
+  later without using up an attempt.
 
 ## Actions
 

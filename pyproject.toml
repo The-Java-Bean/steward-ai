@@ -19,6 +19,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0",
+    "sqlite-vec>=0.1.9",
     "typer>=0.16",
     "uvicorn>=0.54.0",
     "watchdog>=6.0",
@@ -31,6 +32,7 @@ steward = "steward.cli:app"
 [project.entry-points."steward.modules"]
 documents = "steward.modules.documents:DocumentsModule"
 files_ui = "steward.modules.files_ui:FilesUiModule"
+search = "steward.modules.search:SearchModule"
 shares = "steward.modules.shares:SharesModule"
 
 [dependency-groups]
@@ -81,7 +83,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["src/steward/core/db/(versions|alembic)/", "/migrations/"]
 
 [[tool.mypy.overrides]]
-module = ["pypdfium2", "pypdfium2.*"]  # no type information shipped
+module = ["pypdfium2", "pypdfium2.*", "sqlite_vec"]  # no type information shipped
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -24,6 +24,10 @@ modules: {}
 #      ocr_max_pages: 500
 #      ocr_timeout_s: 900 # time OCR of one document may take
 #      ocr_memory_mib: 1536
+#  search:                # searching by meaning (on by default; needs an `embed`
+#    settings:            # model in llm.yaml, otherwise search works by words)
+#      batch_size: 16     # chunks per request to the embedding model
+#      max_chunks: 5000   # documents with more chunks are only searchable by words
 #  hello:                 # the example module (development installs only)
 #    enabled: true
 #    settings:

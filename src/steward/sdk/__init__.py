@@ -33,6 +33,15 @@ from steward.sdk.jobs import (
     JobHandler,
     Lane,
     PermanentJobError,
+    RetryLater,
+)
+from steward.sdk.models import (
+    Message,
+    ModelRole,
+    ModelUnavailable,
+    RoleKind,
+    StageModel,
+    StructuredOutputError,
 )
 from steward.sdk.module import MODULE_NAME_PATTERN, Module, ModuleConfig, ModuleKind
 from steward.sdk.registry import (
@@ -148,6 +157,9 @@ __all__ = [
     "LibraryPath",
     "LinkBuilder",
     "LockedFolder",
+    "Message",
+    "ModelRole",
+    "ModelUnavailable",
     "Module",
     "ModuleConfig",
     "ModuleKind",
@@ -165,6 +177,8 @@ __all__ = [
     "Registrations",
     "Registry",
     "Rendered",
+    "RetryLater",
+    "RoleKind",
     "Schedule",
     "Scope",
     "Sensitivity",
@@ -174,11 +188,13 @@ __all__ = [
     "SharedListing",
     "Stage",
     "StageContext",
+    "StageModel",
     "StageResult",
     "StageRunner",
     "StageStatus",
     "StateAccess",
     "StepOutcome",
+    "StructuredOutputError",
     "Subscription",
     "TextPart",
     "UTCDateTime",

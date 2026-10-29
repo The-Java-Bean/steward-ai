@@ -25,10 +25,11 @@
   {% endif %}
   <button type="submit">Search</button>
 </form>
-<p class="hint">Locked and hidden folders and the trash are never searched here. Text search finds whole words in documents whose text has been extracted; accents and case don't matter.</p>
+<p class="hint">Locked and hidden folders and the trash are never searched here. Text search finds whole words in documents whose text has been extracted; accents and case don't matter. With an embedding model set up, documents about the same thing are found too (marked “related”).</p>
 
 {% if results is not none %}
 <h2>{{ results.total }}{% if results.capped %}+{% endif %} found</h2>
+{% if results.semantic is false %}<p class="hint">The embedding model can't be reached right now, so this searched by words only.</p>{% endif %}
 {% if results.hits %}
 <table>
   <thead><tr><th>Name</th><th>Folder</th><th>Kind</th><th>Size</th><th>Modified</th></tr></thead>
@@ -37,7 +38,7 @@
     <tr>
       {% set href = link(h.library_id ~ ':' ~ h.relpath) %}
       {% set folder_href = folder_link(h.library_id ~ ':' ~ h.folder) %}
-      <td>{% if href %}<a href="{{ href }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}
+      <td>{% if href %}<a href="{{ href }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}{% if h.semantic %} <span class="related">related</span>{% endif %}
         {% if h.snippet %}<p class="snippet">{% if h.page %}<span class="page">p. {{ h.page }}</span> {% endif %}{% for text, hit in h.snippet %}{% if hit %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>{% endif %}</td>
       <td>{% if folder_href %}<a href="{{ folder_href }}"><code>{{ h.library_id }}:{{ h.folder }}</code></a>{% else %}<code>{{ h.library_id }}:{{ h.folder }}</code>{% endif %}</td>
       <td>{{ h.kind or '' }}</td>

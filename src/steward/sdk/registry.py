@@ -25,6 +25,7 @@ from steward.sdk.actions import ActionType
 from steward.sdk.events import EventHandler
 from steward.sdk.health import HealthCheck
 from steward.sdk.jobs import LANES, WORKER_LANES, JobHandler, Lane
+from steward.sdk.models import ROLE_PATTERN, ModelRole, RoleKind
 from steward.sdk.module import ModuleConfig
 from steward.sdk.schedules import When
 from steward.sdk.shares import ShareLinkHandler
@@ -49,6 +50,7 @@ CORE_ACTION_AREAS = ("file", "folder")
 NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$")
 EVENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 ARTIFACT_KIND_PATTERN = re.compile(ARTIFACT_PATTERN)
+ROLE_NAME_PATTERN = re.compile(ROLE_PATTERN)
 
 
 class RegistrationConflict(Exception):
@@ -128,6 +130,14 @@ class Registrations:
 
     def stages(self) -> dict[str, Stage]:
         return {e.name: cast(Stage, e.item) for e in self.at("stage")}
+
+    def model_roles(self) -> dict[str, list[tuple[str, ModelRole]]]:
+        """Role name -> every (module, declaration) of it, in registration order."""
+        found: dict[str, list[tuple[str, ModelRole]]] = {}
+        for e in self.at("model_role"):
+            role = cast(ModelRole, e.item)
+            found.setdefault(role.name, []).append((e.module, role))
+        return found
 
     def actions(self) -> dict[str, ActionType]:
         return {e.name: cast(ActionType, e.item) for e in self.at("action")}
@@ -221,12 +231,14 @@ class Registry:
         default: bool = True,
         index: Literal["full", "metadata"] = "full",
         optional: tuple[str, ...] = (),
+        roles: tuple[str, ...] = (),
     ) -> None:
         """Register a pipeline stage (`<module>.<name>`); see `steward.sdk.stages`.
 
         `requires`, `optional` and `produces` are artifact kinds (`text`, `text:ocr`…).
         Core's `core.hash` stage produces `hash` and `mime`. Raise `version` whenever the
-        output would change, so existing results are recomputed.
+        output would change, so existing results are recomputed. `roles` are the model
+        roles the stage calls (declared with `model_role` by some module).
         """
         if version < 1:
             raise ValueError(f"stage {name!r}: version must be >= 1")
@@ -243,6 +255,9 @@ class Registry:
             raise ValueError(f"stage {name!r}: an artifact kind is both required and optional")
         if index not in ("full", "metadata"):
             raise ValueError(f"stage {name!r}: index must be 'full' or 'metadata'")
+        for role in roles:
+            if not ROLE_NAME_PATTERN.match(role):
+                raise ValueError(f"stage {name!r}: bad role name {role!r}")
         item = Stage(
             name=name,
             version=version,
@@ -254,8 +269,28 @@ class Registry:
             default=default,
             index=index,
             optional=tuple(dict.fromkeys(optional)),
+            roles=tuple(dict.fromkeys(roles)),
         )
         self._add("stage", name, item)
+
+    def model_role(
+        self, role: str, *, kind: RoleKind, description: str, vision: bool = False
+    ) -> None:
+        """Declare a model role this module uses (`embed`, `caption`…). Role names are
+        shared, not prefixed: the owner maps each one once in `llm.yaml`, and several
+        modules may declare the same role if they agree on its `kind`."""
+        if not ROLE_NAME_PATTERN.match(role):
+            raise ValueError(f"role {role!r} must be lowercase snake_case")
+        if kind not in ("chat", "embed"):
+            raise ValueError(f"role {role!r}: kind must be 'chat' or 'embed'")
+        if vision and kind != "chat":
+            raise ValueError(f"role {role!r}: only chat roles can need vision")
+        description = description.strip()
+        if not description:
+            raise ValueError(f"role {role!r} needs a description")
+        self._add(
+            "model_role", f"{self._module}.{role}", ModelRole(role, kind, description, vision)
+        )
 
     def migrations(self, path: Path, *, database: Database = "state") -> None:
         """Register a directory of Alembic revision files for this module's tables.

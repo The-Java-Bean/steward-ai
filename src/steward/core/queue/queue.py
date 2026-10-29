@@ -217,6 +217,34 @@ def fail(
     return "dead" if dead else "queued"
 
 
+def postpone(
+    conn: Connection,
+    job_id: int,
+    *,
+    worker_id: str,
+    delay: timedelta,
+    reason: str,
+    now: datetime | None = None,
+) -> bool:
+    """Queue a running job again after `delay` without counting this attempt (it
+    couldn't run yet, e.g. its model server is down). False if this worker no longer
+    holds it."""
+    now = now or utcnow()
+    result = conn.execute(
+        update(jobs)
+        .where(*_held_by(job_id, worker_id))
+        .values(
+            status="queued",
+            attempts=jobs.c.attempts - 1,
+            run_after=now + delay,
+            lease_until=None,
+            last_error=reason[:MAX_ERROR_CHARS],
+            updated_at=now,
+        )
+    )
+    return result.rowcount == 1
+
+
 def retry(conn: Connection, job_id: int, *, now: datetime | None = None) -> bool:
     """Put a dead job back in the queue with a fresh set of attempts."""
     now = now or utcnow()

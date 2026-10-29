@@ -1,24 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jordan Hosler
 """The `StageContext` a stage's `run` receives: read-only file access (directly or in an
-isolated child process), the content index and `index.db`."""
+isolated child process), the content index, `index.db` and model roles."""
 
 from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
+from pydantic import BaseModel
 from sqlalchemy import Connection
 
-from steward.core import content
+from steward.core import content, embeddings
 from steward.core.db import Databases
+from steward.core.llm import ChatRequest, EmbedRequest, Gateway
+from steward.core.llm import structured as structured_output
+from steward.core.llm.roles import RoleState
 from steward.core.stages.isolate import run_isolated
-from steward.sdk import BlobInfo, ChunkPart, FileChanged, FileInfo, FolderInfo, TextPart
+from steward.sdk import (
+    BlobInfo,
+    ChunkPart,
+    FileChanged,
+    FileInfo,
+    FolderInfo,
+    Message,
+    StageModel,
+    TextPart,
+)
+
+EMBED_BATCH_MAX = 256
 
 OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 
@@ -39,6 +54,11 @@ class Context:
     """The stage's optional inputs that are available (their producer's result is usable)."""
     unavailable: frozenset[str] = frozenset()
     """Its other optional inputs: readable, but always empty."""
+    roles: Mapping[str, RoleState] = field(default_factory=dict, repr=False)
+    """The stage's model roles (all usable: the graph leaves out stages with others)."""
+    gateway: Callable[[], Gateway] | None = field(default=None, repr=False)
+    provenance: tuple[str, ...] = ()
+    """Every present file with this content (sent with each model call)."""
 
     @property
     def path(self) -> Path:
@@ -138,3 +158,107 @@ class Context:
         self._allowed(artifact, write=True)
         with self.dbs.index.write() as conn:
             content.write_chunks(conn, self.blob.content_hash, artifact, source, chunks)
+
+    # --- models ---------------------------------------------------------------------
+
+    def model(self, role: str) -> StageModel:
+        if role not in self.roles or self.gateway is None:
+            raise ValueError(f"stage {self.stage} doesn't use role {role!r}")
+        return RoleModel(self.roles[role], self.gateway(), self.provenance)
+
+    def write_embeddings(
+        self, vectors: Sequence[Sequence[float]], *, role: str, source: str = "chunks"
+    ) -> None:
+        self._allowed("embeddings", write=True)
+        if role not in self.roles or self.gateway is None:
+            raise ValueError(f"stage {self.stage} doesn't use role {role!r}")
+        state = self.roles[role]
+        if state.kind != "embed" or state.model_key is None:
+            raise ValueError(f"role {role!r} isn't a usable embedding role")
+        if source not in (*self.requires, *self.optional, *self.unavailable):
+            raise ValueError(f"stage {self.stage} doesn't read artifact {source!r}")
+        mapping = self.gateway().role_config(role)
+        with self.dbs.index.write() as conn:
+            if not vectors:  # no chunks: drop what an earlier run stored
+                space = embeddings.find_space(conn, role, state.model_key)
+                if space is not None:
+                    embeddings.write(
+                        conn, self.blob.content_hash, space=space, source=source, vectors=[]
+                    )
+                return
+            dims = len(vectors[0])
+            if mapping.dims is not None and mapping.dims != dims:
+                raise embeddings.EmbeddingError(
+                    f"role {role!r} is configured with dims {mapping.dims}, "
+                    f"the model returned {dims}"
+                )
+            space = embeddings.ensure_space(
+                conn, role=role, mapping=mapping, model_key=state.model_key, dims=dims
+            )
+            embeddings.write(
+                conn, self.blob.content_hash, space=space, source=source, vectors=vectors
+            )
+
+
+@dataclass(frozen=True)
+class RoleModel:
+    """`StageModel` for one role: calls go through the gateway, for indexing, with the
+    content's files as provenance."""
+
+    state: RoleState
+    gateway: Gateway
+    provenance: tuple[str, ...]
+
+    @property
+    def role(self) -> str:
+        return self.state.name
+
+    @property
+    def model(self) -> str:
+        return self.state.model or ""
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if self.state.kind != "embed":
+            raise ValueError(f"role {self.role!r} isn't an embedding role")
+        if isinstance(texts, str):
+            raise TypeError("embed() takes a list of texts")
+        prefix = self.gateway.role_config(self.role).document_prefix
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), EMBED_BATCH_MAX):
+            batch = [prefix + t for t in texts[i : i + EMBED_BATCH_MAX]]
+            result = self.gateway.call(
+                self.role, EmbedRequest(batch), provenance=self.provenance, purpose="index"
+            )
+            got = result.response.vectors
+            if len(got) != len(batch):
+                raise embeddings.EmbeddingError(
+                    f"the model returned {len(got)} vectors for {len(batch)} texts"
+                )
+            vectors.extend(got)
+        return vectors
+
+    def chat(self, messages: Sequence[Message], *, options: Mapping[str, Any] | None = None) -> str:
+        if self.state.kind != "chat":
+            raise ValueError(f"role {self.role!r} isn't a chat role")
+        result = self.gateway.call(
+            self.role,
+            ChatRequest(list(messages), dict(options or {})),
+            provenance=self.provenance,
+            purpose="index",
+        )
+        return result.response.text
+
+    def structured[M: BaseModel](
+        self, schema: type[M], messages: Sequence[Message], *, retries: int = 2
+    ) -> M:
+        if self.state.kind != "chat":
+            raise ValueError(f"role {self.role!r} isn't a chat role")
+
+        def send(request: ChatRequest) -> str:
+            result = self.gateway.call(
+                self.role, request, provenance=self.provenance, purpose="index"
+            )
+            return result.response.text
+
+        mapping = self.gateway.role_config(self.role)
+        return structured_output.run(send, mapping, schema, messages, retries=retries)

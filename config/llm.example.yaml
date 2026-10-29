@@ -19,6 +19,17 @@ roles:
     model: <chat-model>
     context: 8192
   embed:
+    # Used by the `search` module to find documents by meaning. Changing the model,
+    # `dims` or `document_prefix` embeds everything again (in the background).
     endpoint: local
     model: <embedding-model>
     dims: 768
+    # Some embedding models want an instruction in front of queries or documents;
+    # see the model's documentation. Leave empty otherwise.
+    # query_prefix: "Instruct: Given a search query, retrieve relevant documents\nQuery: "
+    # document_prefix: ""
+    # Files whose closest passage is less similar to the query than this (cosine,
+    # -1..1) aren't shown as matches by meaning. Depends on the model.
+    min_similarity: 0.40
+  # Run `steward models list` to see which roles the enabled modules use, and
+  # `steward models probe` to test the mapped models.
