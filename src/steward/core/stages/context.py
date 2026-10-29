@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jordan Hosler
-"""The `StageContext` a stage's `run` receives: read-only file access and `index.db`."""
+"""The `StageContext` a stage's `run` receives: read-only file access (directly or in an
+isolated child process), the content index and `index.db`."""
 
 from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,8 +15,10 @@ from typing import BinaryIO
 
 from sqlalchemy import Connection
 
+from steward.core import content
 from steward.core.db import Databases
-from steward.sdk import BlobInfo, FileChanged, FileInfo, FolderInfo
+from steward.core.stages.isolate import run_isolated
+from steward.sdk import BlobInfo, ChunkPart, FileChanged, FileInfo, FolderInfo, TextPart
 
 OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 
@@ -30,6 +33,8 @@ class Context:
     root: str
     dbs: Databases = field(repr=False)
     renew: Callable[[], None] = field(repr=False)
+    requires: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
 
     @property
     def path(self) -> Path:
@@ -79,3 +84,46 @@ class Context:
 
     def renew_lease(self) -> None:
         self.renew()
+
+    def run_isolated[T](
+        self, fn: Callable[[BinaryIO], T], *, timeout_s: float, memory_mib: int
+    ) -> T:
+        return run_isolated(
+            self.path,
+            self.file.size,
+            self.file.mtime_ns,
+            fn,
+            timeout_s=timeout_s,
+            memory_mib=memory_mib,
+            renew=self.renew,
+        )
+
+    # --- content index ----------------------------------------------------------------
+
+    def _allowed(self, artifact: str, *, write: bool) -> None:
+        allowed = self.produces if write else (*self.requires, *self.produces)
+        if artifact not in allowed:
+            verb = "produce" if write else "require"
+            raise ValueError(f"stage {self.stage} doesn't {verb} artifact {artifact!r}")
+
+    def read_text(self, artifact: str = "text") -> list[TextPart]:
+        self._allowed(artifact, write=False)
+        with self.dbs.index.read() as conn:
+            return content.read_text(conn, self.blob.content_hash, artifact)
+
+    def write_text(self, parts: Sequence[TextPart], *, artifact: str = "text") -> None:
+        self._allowed(artifact, write=True)
+        with self.dbs.index.write() as conn:
+            content.write_text(conn, self.blob.content_hash, artifact, parts)
+
+    def read_chunks(self, artifact: str = "chunks") -> list[ChunkPart]:
+        self._allowed(artifact, write=False)
+        with self.dbs.index.read() as conn:
+            return content.read_chunks(conn, self.blob.content_hash, artifact)
+
+    def write_chunks(
+        self, chunks: Sequence[ChunkPart], *, source: str, artifact: str = "chunks"
+    ) -> None:
+        self._allowed(artifact, write=True)
+        with self.dbs.index.write() as conn:
+            content.write_chunks(conn, self.blob.content_hash, artifact, source, chunks)

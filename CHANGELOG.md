@@ -6,7 +6,32 @@ All notable changes to steward-ai are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- `/api/v1/search` searches names and text by default (`in=all`); `in=names` gives the
+  old behaviour. Hits have `snippet` and `page`.
+
+### Fixed
+- MIME types no longer depend on the host's `/etc/mime.types`: DOCX, XLSX, PPTX, ODT
+  and other office files were typed as zip archives in the container image.
+
 ### Added
+- Text from documents and full-text search (ADR 0021). New built-in module `documents`
+  (on by default): stage `documents.extract` reads plain text and code, Markdown, HTML,
+  PDF, DOCX and ODT (encrypted, unreadable, unsafe, too slow or too big files are
+  skipped with a reason); stage `documents.chunk` cuts the text into page- and
+  heading-aware chunks. Settings in `modules.yaml` (`max_file_mib`, `max_text_mib`,
+  `max_pages`, `timeout_s`, `memory_mib`, `chunk_chars`, `chunk_overlap`). The core
+  keeps the text and chunks in `index.db` (index revision `0004`: `texts`, `chunks`,
+  FTS5 `chunks_fts`). `/ui/search`, `/api/v1/search` (`in=all|names|text`), `steward
+  search --in` and the Locked Folder search now find words in the text too, with
+  highlighted snippets and page numbers; locked, hidden and trashed files stay out of
+  normal search. `steward files text LIB:PATH` prints a file's extracted text.
+- SDK: `StageContext.write_text/read_text/write_chunks/read_chunks` (the content
+  index), `StageContext.run_isolated` (run a parser in a separate process with memory,
+  CPU and time limits), `TextPart`, `ChunkPart`, `IsolationError`, `MATCH_MARKERS`;
+  `Entry.snippet` and `Entry.page` on search results.
+- Dependencies: `pypdf`, `cryptography` (AES-encrypted PDFs that open without a
+  password).
 - Phase 2 acceptance tests (`tests/acceptance/`): each criterion end to end over HTTP,
   starting from a fresh install finished through the setup wizard, on two folder
   layouts: an upload resumed after a dropped connection and a server restart; locked

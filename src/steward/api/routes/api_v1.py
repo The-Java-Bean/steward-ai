@@ -34,10 +34,11 @@ from steward.core.folders.policy import Policy
 from steward.core.runtime import Runtime
 from steward.core.search import (
     MAX_LIMIT,
+    Mode,
     SearchError,
     SearchFilters,
     Visibility,
-    search_files,
+    search_all,
 )
 from steward.sdk import ActionRefused
 
@@ -226,9 +227,12 @@ def search(
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
     locked: bool = False,
+    mode: Annotated[Mode, Query(alias="in")] = "all",
 ) -> Response:
-    """Search file names and paths. `locked=true` searches only the locked folders and
-    needs a session with a recent password check."""
+    """Search file names and paths and the extracted text (`in=all`, the default), or
+    only one of them (`in=names`, `in=text`). Text hits carry a `snippet` and `page`.
+    `locked=true` searches only the locked folders and needs a session with a recent
+    password check."""
     principal = _reader(request)
     if locked:
         if not principal.is_session:
@@ -236,7 +240,7 @@ def search(
         _confirmed(request, principal)
     runtime = _runtime(request)
     try:
-        results = search_files(
+        results = search_all(
             runtime.dbs,
             _policy(runtime),
             q,
@@ -250,12 +254,14 @@ def search(
             scope="locked" if locked else "normal",
             limit=limit,
             offset=offset,
+            mode=mode,
         )
     except SearchError as exc:
         return _refused(exc)
     return JSONResponse(
         {
             "query": q,
+            "in": mode,
             "total": results.total,
             "capped": results.capped,
             "hits": [h.as_dict() for h in results.hits],

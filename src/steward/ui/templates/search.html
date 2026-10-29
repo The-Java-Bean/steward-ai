@@ -3,7 +3,12 @@
 {% block content %}
 <h1>Search</h1>
 <form method="get" action="/ui/search" role="search">
-  <label>Words in the file name or path <input name="q" value="{{ q }}" maxlength="2000" autofocus></label>
+  <label>Words in the name, path or text <input name="q" value="{{ q }}" maxlength="2000" autofocus></label>
+  <label>Search in
+    <select name="in">
+      {% for value, label in modes.items() %}<option value="{{ value }}"{% if value == mode %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
   <label>Kind
     <select name="kind">
       <option value="">any</option>
@@ -20,7 +25,7 @@
   {% endif %}
   <button type="submit">Search</button>
 </form>
-<p class="hint">Locked and hidden folders and the trash are never searched here.</p>
+<p class="hint">Locked and hidden folders and the trash are never searched here. Text search finds whole words in documents whose text has been extracted; accents and case don't matter.</p>
 
 {% if results is not none %}
 <h2>{{ results.total }}{% if results.capped %}+{% endif %} found</h2>
@@ -32,7 +37,8 @@
     <tr>
       {% set href = link(h.library_id ~ ':' ~ h.relpath) %}
       {% set folder_href = folder_link(h.library_id ~ ':' ~ h.folder) %}
-      <td>{% if href %}<a href="{{ href }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}</td>
+      <td>{% if href %}<a href="{{ href }}">{{ h.name }}</a>{% else %}{{ h.name }}{% endif %}
+        {% if h.snippet %}<p class="snippet">{% if h.page %}<span class="page">p. {{ h.page }}</span> {% endif %}{% for text, hit in h.snippet %}{% if hit %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{% endfor %}</p>{% endif %}</td>
       <td>{% if folder_href %}<a href="{{ folder_href }}"><code>{{ h.library_id }}:{{ h.folder }}</code></a>{% else %}<code>{{ h.library_id }}:{{ h.folder }}</code>{% endif %}</td>
       <td>{{ h.kind or '' }}</td>
       <td>{{ h.size|filesizeformat }}</td>
@@ -43,8 +49,8 @@
 </table>
 {% endif %}
 <p>
-  {% if page > 1 %}<a href="?q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
-  {% if results.total > page * per_page %}<a href="?q={{ q|urlencode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
+  {% if page > 1 %}<a href="?q={{ q|urlencode }}&amp;in={{ mode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if results.total > page * per_page %}<a href="?q={{ q|urlencode }}&amp;in={{ mode }}&amp;kind={{ kind|urlencode }}&amp;library={{ library|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
 </p>
 {% endif %}
 {% endblock %}

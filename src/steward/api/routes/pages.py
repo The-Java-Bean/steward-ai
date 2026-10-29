@@ -25,7 +25,7 @@ from steward.core.folders import FolderError, FolderRef, PathError, load_policy
 from steward.core.folders import store as folder_store
 from steward.core.folders.types import FolderTypeError
 from steward.core.runtime import Runtime
-from steward.core.search import SearchError, SearchFilters, Visibility, search_files
+from steward.core.search import Mode, SearchError, SearchFilters, Visibility, search_all
 from steward.sdk import ActionRefused, HealthResult
 
 router = APIRouter()
@@ -42,6 +42,8 @@ def _runtime(request: Request) -> Runtime:
 
 # --- search ----------------------------------------------------------------------------
 
+SEARCH_MODES = {"all": "Names and text", "names": "Names only", "text": "Text only"}
+
 
 @router.get("/ui/search")
 def search_page(
@@ -50,6 +52,7 @@ def search_page(
     kind: Annotated[str, Query(max_length=32)] = "",
     library: Annotated[str, Query(max_length=64)] = "",
     page: Annotated[int, Query(ge=1, le=1000)] = 1,
+    mode: Annotated[Mode, Query(alias="in")] = "all",
 ) -> Response:
     runtime = _runtime(request)
     with runtime.dbs.state.read() as conn:
@@ -58,6 +61,8 @@ def search_page(
         "q": q,
         "kind": kind,
         "library": library,
+        "mode": mode,
+        "modes": SEARCH_MODES,
         "kinds": KINDS,
         "libraries": sorted(policy.libraries),
         "results": None,
@@ -68,13 +73,14 @@ def search_page(
     }
     if q.strip() or kind:
         try:
-            context["results"] = search_files(
+            context["results"] = search_all(
                 runtime.dbs,
                 policy,
                 q,
                 filters=SearchFilters(kind=kind or None, library=library or None),
                 limit=50,
                 offset=(page - 1) * 50,
+                mode=mode,
             )
         except SearchError as exc:
             context["error"] = str(exc)

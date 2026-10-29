@@ -5,8 +5,8 @@
 {% include "files_ui/_nav.html" %}
 <h1>Search the Locked Folder</h1>
 <form method="get" action="{{ base }}/search" class="inline-row">
-  <label class="sr-only" for="locked-q">Words in the name or path</label>
-  <input id="locked-q" name="q" value="{{ q }}" placeholder="Words in the name or path" maxlength="500" autofocus>
+  <label class="sr-only" for="locked-q">Words in the name, path or text</label>
+  <input id="locked-q" name="q" value="{{ q }}" placeholder="Words in the name, path or text" maxlength="500" autofocus>
   <button type="submit" class="small">Search</button>
 </form>
 {% if found is not none %}

@@ -37,7 +37,7 @@ from steward.core.executor.guarded import (
 from steward.core.folders import FolderRef, PathError
 from steward.core.folders.policy import FolderMapping, Policy
 from steward.core.privacy.sharing import SharingRules
-from steward.core.search import SearchError, SearchFilters, Visibility, search_files
+from steward.core.search import SearchError, SearchFilters, Visibility, search_all
 from steward.sdk import ActionRefused
 from steward.sdk.web import (
     Crumb,
@@ -275,7 +275,7 @@ class Browser:
         if folder is not None:
             where = self.locate(folder, scope)
             folder = where.path
-        results = search_files(
+        results = search_all(
             self.dbs,
             self.policy,
             query,
@@ -294,6 +294,8 @@ class Browser:
                 file_id=h.file_id,
                 mime=h.mime,
                 file_kind=h.kind,
+                snippet=h.snippet,
+                page=h.page,
             )
             for h in results.hits
         )

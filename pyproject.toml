@@ -10,9 +10,11 @@ dependencies = [
     "alembic>=1.16",
     "argon2-cffi>=25.1",
     "blake3>=1.0",
+    "cryptography>=44",
     "fastapi>=0.162.0",
     "jinja2>=3.1.6",
     "pydantic>=2.11",
+    "pypdf>=6",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0",
@@ -26,6 +28,7 @@ steward = "steward.cli:app"
 
 # Built-in modules are registered exactly like out-of-tree ones (see docs/modules.md).
 [project.entry-points."steward.modules"]
+documents = "steward.modules.documents:DocumentsModule"
 files_ui = "steward.modules.files_ui:FilesUiModule"
 shares = "steward.modules.shares:SharesModule"
 

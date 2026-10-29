@@ -6,6 +6,15 @@
 config_version: 1
 
 modules: {}
+#  documents:             # text from documents (on by default)
+#    settings:
+#      max_file_mib: 200  # larger files keep only name/metadata search
+#      max_text_mib: 16   # text kept per document
+#      max_pages: 2000
+#      timeout_s: 120     # time one document may take to parse
+#      memory_mib: 1024   # memory limit of the parser process
+#      chunk_chars: 1200  # search chunk size, in characters
+#      chunk_overlap: 150
 #  hello:                 # the example module (development installs only)
 #    enabled: true
 #    settings:

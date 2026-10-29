@@ -259,6 +259,21 @@ def test_search_inside_the_locked_folder(client: TestClient) -> None:
     assert too_many.status_code == 200
 
 
+def test_text_search_inside_the_locked_folder(client: TestClient) -> None:
+    # "deeper" is in a locked file's text (and its folder's name); the highlighted
+    # snippet shows the content index found it.
+    found = client.get("/ui/locked/search", params={"q": "deeper"})
+    assert found.status_code == 200
+    assert "note.txt" in found.text
+    assert "<mark>deeper</mark>" in found.text
+    # Words that only locked files contain are never found by the normal search.
+    normal = client.get("/ui/search", params={"q": "diary"})
+    assert "diary.txt" not in normal.text
+    assert "<mark>" not in normal.text
+    # Text found in normal files isn't offered in the Locked Folder.
+    assert "report.txt" not in client.get("/ui/locked/search", params={"q": "quarterly"}).text
+
+
 def test_files_by_kind_in_the_locked_scope(client: TestClient) -> None:
     locked = client.get("/ui/locked", params={"kind": "text"})
     assert SECRET_NAME in locked.text

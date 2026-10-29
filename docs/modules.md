@@ -141,9 +141,12 @@ Never touch the core's tables.
 
 ## Stages
 
-A stage computes something from a file's content and stores it in the module's own
-`index.db` tables ([ADR 0011](adr/0011-stage-framework.md)). `examples/hello-module`
-has a complete one.
+A stage computes something from a file's content and stores it either in the core's
+**content index** (text and chunks: searchable at once, with the core's privacy and
+scope rules) or in the module's own `index.db` tables
+([ADR 0011](adr/0011-stage-framework.md), [ADR 0021](adr/0021-content-index-and-documents.md)).
+`examples/hello-module` has a complete one using its own table; the built-in
+`documents` module (`src/steward/modules/documents/`) uses the content index.
 
 ```python
 from steward.sdk import BlobInfo, FileInfo, FolderInfo, Registry, StageContext, StageResult
@@ -185,6 +188,39 @@ def register(r: Registry) -> None:
   isn't planned again until `steward jobs retry` or a version bump.
 - Startup stops if two stages produce the same kind, a required kind has no producer
   (declare the module that provides it in `requires`), or stages form a cycle.
+
+### The content index
+
+Text and chunks go into core tables through the context, so every module's output is
+searched the same way (`/ui/search`, `/api/v1/search`, the Locked Folder search):
+
+```python
+from steward.sdk import ChunkPart, StageContext, TextPart
+
+
+def extract(ctx: StageContext) -> None:  # produces=("text",)
+    ctx.write_text([TextPart("page one…", page=1), TextPart("page two…", page=2)])
+
+
+def chunk(ctx: StageContext) -> None:  # requires=("text",), produces=("chunks",)
+    parts = ctx.read_text("text")
+    ctx.write_chunks([ChunkPart(p.body, page=p.page) for p in parts], source="text")
+```
+
+- You may write only artifact kinds your stage `produces` and read kinds it `requires`
+  (or produces); anything else raises `ValueError`.
+- Each write replaces what was stored for that content and kind. Empty bodies are
+  dropped from chunks; NUL and the snippet marker characters are removed.
+
+### Parsing untrusted files
+
+Run parsers with `ctx.run_isolated(fn, timeout_s=..., memory_mib=...)`: `fn(file)` runs
+in a separate, resource-limited process that opens the file itself (read-only, no
+symlinks, checked against discovery's record), and only its pickled return value comes
+back. `fn` must be importable by name (a module-level function or a
+`functools.partial` of one). It raises `FileChanged`, or `IsolationError` with
+`reason` `timed_out`, `too_big`, `crashed` or `error` (then `error_type` is the
+exception's class name; messages are never passed on, since they can quote content).
 
 ## Actions
 

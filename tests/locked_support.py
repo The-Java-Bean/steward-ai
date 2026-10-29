@@ -15,6 +15,8 @@ from steward.core.config import DiscoverySettings
 from steward.core.db.schema import sessions
 from steward.core.discovery import Scanner
 from steward.core.folders import FolderRef, store
+from steward.core.worker import Worker
+from steward.modules.documents import DocumentsModule
 from steward.modules.files_ui import FilesUiModule
 from steward.modules.shares import SharesModule
 
@@ -41,7 +43,7 @@ TREE = {
 
 class LockedEnv:
     def __init__(self, tmp_path: Path) -> None:
-        self.runtime = make_runtime(tmp_path, (FilesUiModule, SharesModule))
+        self.runtime = make_runtime(tmp_path, (DocumentsModule, FilesUiModule, SharesModule))
         self.root = tmp_path / "lib"
         for relpath, content in TREE.items():
             path = self.root / relpath
@@ -54,6 +56,9 @@ class LockedEnv:
             store.lock(conn, FolderRef("lib", "vault/own"), actor=ACTOR)
             store.ensure_default_roles(conn, actor=ACTOR)
         self.scan()
+        # Index the text too, so text search inside and outside the Locked Folder is
+        # covered by every test that uses this library.
+        Worker(self.runtime).drain()
         make_owner(self.runtime)
 
     def scan(self) -> None:

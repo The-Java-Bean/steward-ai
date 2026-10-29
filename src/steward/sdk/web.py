@@ -90,6 +90,11 @@ class Entry:
     """`document`, `image`, `video`, `audio`, `text`, `archive` or `other`."""
     locked: bool = False
     """A folder that is locked (only listed in the `locked` scope)."""
+    snippet: tuple[tuple[str, bool], ...] = ()
+    """Search results only: text around the match in the file's contents, as segments
+    and whether each one matched."""
+    page: int | None = None
+    """Search results only: the page of that match, for paged documents."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,8 +207,9 @@ class Files(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> FilePage:
-        """Files whose path contains every word of `query`. Raises `ValueError` for a
-        query that can't be searched (too many or too long words)."""
+        """Files whose path or extracted text contains every word of `query`, best
+        matches first (text matches carry a `snippet`). Raises `ValueError` for a query
+        that can't be searched (too many or too long words)."""
         ...
 
     def locked_folders(self) -> list[LockedFolder]:

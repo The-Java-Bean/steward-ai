@@ -97,3 +97,19 @@ def test_ignore_patterns(relpath: str, ignored: bool) -> None:
     from steward.core.config import DiscoverySettings
 
     assert is_ignored(relpath, DiscoverySettings().ignore_patterns) is ignored
+
+
+def test_mime_types_dont_depend_on_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A container without /etc/mime.types must detect the same types as a desktop."""
+    import mimetypes
+
+    def no_system_files() -> None:
+        raise AssertionError("the host's mime.types must not be read")
+
+    monkeypatch.setattr(mimetypes, "guess_type", lambda *a, **k: no_system_files())
+    assert detect_mime("a.docx", b"PK\x03\x04") == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert detect_mime("a.odt", b"PK\x03\x04") == "application/vnd.oasis.opendocument.text"
+    assert kind_of(detect_mime("a.xlsx", b"PK\x03\x04")) == "document"
+    assert detect_mime("a.pdf", b"") == "application/pdf"

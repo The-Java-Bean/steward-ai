@@ -55,18 +55,23 @@ from steward.sdk.shares import (
     ShareRequest,
 )
 from steward.sdk.stages import (
+    MATCH_MARKERS,
     AppliesTo,
     BlobInfo,
+    ChunkPart,
     FileChanged,
     FileInfo,
     FolderInfo,
     IndexPolicy,
+    IsolationError,
+    IsolationReason,
     Sensitivity,
     Stage,
     StageContext,
     StageResult,
     StageRunner,
     StageStatus,
+    TextPart,
 )
 from steward.sdk.state import StateAccess, UTCDateTime, utcnow
 from steward.sdk.ui import Badge, UiPage
@@ -96,6 +101,7 @@ from steward.sdk.web import (
 __all__ = [
     "EXAMPLE_TREE",
     "LANES",
+    "MATCH_MARKERS",
     "MODULE_NAME_PATTERN",
     "TOKEN_PATTERN",
     "WORKER_LANES",
@@ -110,6 +116,7 @@ __all__ = [
     "AppliesTo",
     "Badge",
     "BlobInfo",
+    "ChunkPart",
     "Crumb",
     "Daily",
     "Database",
@@ -130,6 +137,8 @@ __all__ = [
     "HealthResult",
     "HealthStatus",
     "IndexPolicy",
+    "IsolationError",
+    "IsolationReason",
     "JobContext",
     "JobHandler",
     "JobType",
@@ -171,6 +180,7 @@ __all__ = [
     "StateAccess",
     "StepOutcome",
     "Subscription",
+    "TextPart",
     "UTCDateTime",
     "UiPage",
     "UnlockPreview",

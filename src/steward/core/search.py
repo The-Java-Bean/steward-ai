@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jordan Hosler
-"""Filename and metadata search (Phase 1's keyword search; content search comes with the
-`search` module).
+"""Search: file names and paths, and the content index (extracted text).
 
-Every word of the query must appear in the file's path (case-insensitive); files whose
-*name* contains the words rank first, then newer files. Filters: library, folder, kind,
-size and modification time.
+- **Names** (`search_files`): every word of the query must appear in the file's path
+  (case-insensitive); files whose *name* contains the words rank first, then newer files.
+- **Text** (`search_text`): every word must appear in one chunk of the file's extracted
+  text (FTS5, accents and case ignored); files rank by their best chunk (BM25, headings
+  count double), and each hit carries a snippet of that chunk.
+- **Both** (`search_all`): the two rankings merged by reciprocal rank fusion.
+
+Filters (all modes): library, folder, kind, size and modification time.
 
 What can be found depends on the scope, and is decided **in the SQL query**:
 - `normal`: never anything in a locked folder, a hidden folder (`visible: false`), a
@@ -19,7 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,13 +33,22 @@ from steward.core.db import Databases
 from steward.core.folders.paths import FolderRef, PathError
 from steward.core.folders.policy import COPY_HOLDING_ROLES, Policy
 from steward.core.folders.store import STEWARD_DIR
+from steward.sdk import MATCH_MARKERS
 
 type Scope = Literal["normal", "locked"]
+type Mode = Literal["all", "names", "text"]
+type Snippet = tuple[tuple[str, bool], ...]
+"""Text segments and whether each one matched the query."""
 
 MAX_TOKENS = 10
 MAX_TOKEN_LENGTH = 200
 MAX_LIMIT = 200
 COUNT_CAP = 10_000
+RANK_CAP = 1000
+"""How deep `search_all` looks into each ranking (pages beyond this aren't offered)."""
+RRF_K = 60
+SNIPPET_TOKENS = 24
+START, END = MATCH_MARKERS
 
 
 class SearchError(ValueError):
@@ -64,6 +77,10 @@ class SearchHit:
     modified: datetime
     kind: str | None
     mime: str | None
+    snippet: Snippet = ()
+    """From the best matching chunk, for text matches."""
+    page: int | None = None
+    """The page of the best matching chunk, if the document has pages."""
 
     @property
     def name(self) -> str:
@@ -83,6 +100,8 @@ class SearchHit:
             "modified": self.modified.isoformat(),
             "kind": self.kind,
             "mime": self.mime,
+            "snippet": "".join(text for text, _ in self.snippet) or None,
+            "page": self.page,
         }
 
 
@@ -223,25 +242,13 @@ def _connect(dbs: Databases) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def search_files(
-    dbs: Databases,
-    policy: Policy,
-    query: str,
-    *,
-    filters: SearchFilters = SearchFilters(),  # noqa: B008 -- frozen dataclass
-    scope: Scope = "normal",
-    limit: int = 50,
-    offset: int = 0,
-) -> SearchResults:
-    words = tokens(query)
-    if not 1 <= limit <= MAX_LIMIT or offset < 0:
-        raise SearchError(f"limit must be 1-{MAX_LIMIT} and offset at least 0")
+def _conditions(
+    policy: Policy, filters: SearchFilters, scope: Scope
+) -> tuple[list[str], list[Any]] | None:
+    """SQL conditions on `files f` (and `idx.blobs b`) for the scope rules and filters.
+    None: nothing can match (the locked scope without locked folders)."""
     where = ["f.present = 1"]
     args: list[Any] = []
-    for word in words:
-        where.append("instr(steward_fold(f.relpath), ?) > 0")
-        args.append(word)
-
     visibility = Visibility(policy)
     if scope == "normal":
         for ref in visibility.hidden:
@@ -250,7 +257,7 @@ def search_files(
             args.extend(values)
     else:
         if not visibility.locked:
-            return SearchResults([], 0, capped=False)
+            return None
         parts = [_under(ref) for ref in visibility.locked]
         where.append("(" + " OR ".join(c for c, _ in parts) + ")")
         for _, values in parts:
@@ -286,36 +293,242 @@ def search_files(
     if filters.modified_before is not None:
         where.append("f.mtime_ns < ?")
         args.append(_ns(filters.modified_before))
+    return where, args
 
+
+def _check_limits(limit: int, offset: int) -> None:
+    if not 1 <= limit <= MAX_LIMIT or offset < 0:
+        raise SearchError(f"limit must be 1-{MAX_LIMIT} and offset at least 0")
+
+
+FILE_COLUMNS = "f.file_id, f.library_id, f.relpath, f.size, f.mtime_ns, b.kind, b.mime"
+
+
+def _hit(r: Sequence[Any], snippet: Snippet = (), page: int | None = None) -> SearchHit:
+    return SearchHit(
+        file_id=r[0],
+        library_id=r[1],
+        relpath=r[2],
+        size=r[3],
+        modified=datetime.fromtimestamp(r[4] / 1e9, tz=UTC),
+        kind=r[5],
+        mime=r[6],
+        snippet=snippet,
+        page=page,
+    )
+
+
+def _count(conn: sqlite3.Connection, sql_from: str, args: Sequence[Any]) -> int:
+    return int(
+        conn.execute(
+            f"SELECT count(*) FROM (SELECT 1 {sql_from} LIMIT {COUNT_CAP + 1})",  # noqa: S608 -- only placeholders are interpolated
+            args,
+        ).fetchone()[0]
+    )
+
+
+# --- names ---------------------------------------------------------------------------
+
+
+def _name_query(
+    words: list[str], where: list[str], args: list[Any]
+) -> tuple[str, list[Any], str, list[Any]]:
+    """(FROM clause, its args, ORDER BY clause, its args) for a name search."""
+    where = [*where, *("instr(steward_fold(f.relpath), ?) > 0" for _ in words)]
     sql_from = (
         "FROM files f LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "
         f"WHERE {' AND '.join(where)}"
     )
     name_score = " + ".join("(instr(steward_name(f.relpath), ?) > 0)" for _ in words)
     order = f"({name_score}) DESC, " if words else ""
+    return sql_from, [*args, *words], f"{order}f.mtime_ns DESC, f.relpath", list(words)
+
+
+def search_files(
+    dbs: Databases,
+    policy: Policy,
+    query: str,
+    *,
+    filters: SearchFilters = SearchFilters(),  # noqa: B008 -- frozen dataclass
+    scope: Scope = "normal",
+    limit: int = 50,
+    offset: int = 0,
+) -> SearchResults:
+    """Files whose path contains every word of `query` (no words: every file the filters
+    allow, newest first)."""
+    words = tokens(query)
+    _check_limits(limit, offset)
+    conditions = _conditions(policy, filters, scope)
+    if conditions is None:
+        return SearchResults([], 0, capped=False)
+    sql_from, args, order, order_args = _name_query(words, *conditions)
     with _connect(dbs) as conn:
-        total = conn.execute(
-            f"SELECT count(*) FROM (SELECT 1 {sql_from} LIMIT {COUNT_CAP + 1})",  # noqa: S608 -- only placeholders are interpolated
-            args,
-        ).fetchone()[0]
+        total = _count(conn, sql_from, args)
         rows = conn.execute(
-            "SELECT f.file_id, f.library_id, f.relpath, f.size, f.mtime_ns, b.kind, b.mime "
-            f"{sql_from} ORDER BY {order}f.mtime_ns DESC, f.relpath LIMIT ? OFFSET ?",
-            [*args, *words, limit, offset],
+            f"SELECT {FILE_COLUMNS} {sql_from} ORDER BY {order} LIMIT ? OFFSET ?",
+            [*args, *order_args, limit, offset],
         ).fetchall()
-    hits = [
-        SearchHit(
-            file_id=r[0],
-            library_id=r[1],
-            relpath=r[2],
-            size=r[3],
-            modified=datetime.fromtimestamp(r[4] / 1e9, tz=UTC),
-            kind=r[5],
-            mime=r[6],
-        )
-        for r in rows
-    ]
+    return SearchResults([_hit(r) for r in rows], min(total, COUNT_CAP), capped=total > COUNT_CAP)
+
+
+# --- text ----------------------------------------------------------------------------
+
+
+def fts_query(words: Sequence[str]) -> str | None:
+    """An FTS5 query requiring every word (each quoted, so nothing in it is syntax).
+    None if no word has a letter or digit."""
+    quoted = ['"' + w.replace('"', '""') + '"' for w in words if any(ch.isalnum() for ch in w)]
+    return " ".join(quoted) or None
+
+
+_MATCHES = (
+    "SELECT c.content_hash AS h, min(t.rank) AS score, c.chunk_id AS chunk_id, c.page AS page "
+    "FROM idx.chunks_fts t JOIN idx.chunks c ON c.chunk_id = t.rowid "
+    "WHERE t.chunks_fts MATCH ? GROUP BY c.content_hash"
+)
+"""Best chunk per content (SQLite takes bare columns from the row with the minimum)."""
+
+
+def _text_query(match: str, where: list[str], args: list[Any]) -> tuple[str, list[Any]]:
+    sql_from = (
+        f"FROM ({_MATCHES}) m JOIN files f ON f.content_hash = m.h "
+        "LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "
+        f"WHERE {' AND '.join(where)}"
+    )
+    return sql_from, [match, *args]
+
+
+def _snippets(conn: sqlite3.Connection, match: str, chunk_ids: Sequence[int]) -> dict[int, Snippet]:
+    if not chunk_ids:
+        return {}
+    marks = ", ".join("?" for _ in chunk_ids)
+    rows = conn.execute(
+        "SELECT t.rowid, snippet(chunks_fts, 1, ?, ?, '…', ?) FROM idx.chunks_fts t "  # noqa: S608 -- only placeholders are interpolated
+        f"WHERE t.chunks_fts MATCH ? AND t.rowid IN ({marks})",
+        [START, END, SNIPPET_TOKENS, match, *chunk_ids],
+    ).fetchall()
+    return {int(r[0]): split_snippet(r[1]) for r in rows}
+
+
+def split_snippet(marked: str) -> Snippet:
+    """`a \ue000b\ue001 c` -> (("a ", False), ("b", True), (" c", False))."""
+    segments: list[tuple[str, bool]] = []
+    rest = " ".join(marked.split())
+    while rest:
+        before, found, after = rest.partition(START)
+        if before:
+            segments.append((before, False))
+        if not found:
+            break
+        inside, _, rest = after.partition(END)
+        if inside:
+            segments.append((inside, True))
+    return tuple(segments)
+
+
+def search_text(
+    dbs: Databases,
+    policy: Policy,
+    query: str,
+    *,
+    filters: SearchFilters = SearchFilters(),  # noqa: B008 -- frozen dataclass
+    scope: Scope = "normal",
+    limit: int = 50,
+    offset: int = 0,
+) -> SearchResults:
+    """Files whose extracted text has a chunk containing every word of `query`."""
+    match = fts_query(tokens(query))
+    _check_limits(limit, offset)
+    conditions = _conditions(policy, filters, scope)
+    if match is None or conditions is None:
+        return SearchResults([], 0, capped=False)
+    sql_from, args = _text_query(match, *conditions)
+    with _connect(dbs) as conn:
+        total = _count(conn, sql_from, args)
+        rows = conn.execute(
+            f"SELECT {FILE_COLUMNS}, m.chunk_id, m.page {sql_from} "
+            "ORDER BY m.score, f.mtime_ns DESC, f.relpath LIMIT ? OFFSET ?",
+            [*args, limit, offset],
+        ).fetchall()
+        snippets = _snippets(conn, match, [r[7] for r in rows])
+    hits = [_hit(r, snippets.get(r[7], ()), r[8]) for r in rows]
     return SearchResults(hits, min(total, COUNT_CAP), capped=total > COUNT_CAP)
+
+
+# --- both ----------------------------------------------------------------------------
+
+
+def search_all(
+    dbs: Databases,
+    policy: Policy,
+    query: str,
+    *,
+    filters: SearchFilters = SearchFilters(),  # noqa: B008 -- frozen dataclass
+    scope: Scope = "normal",
+    limit: int = 50,
+    offset: int = 0,
+    mode: Mode = "all",
+) -> SearchResults:
+    """Names and text, merged by reciprocal rank fusion (each file once; text hits keep
+    their snippet). `mode` picks one side instead. Without searchable words this is a
+    name search (every file the filters allow)."""
+    if mode == "names":
+        return search_files(
+            dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
+        )
+    if mode == "text":
+        return search_text(
+            dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
+        )
+    words = tokens(query)
+    match = fts_query(words)
+    if match is None:
+        return search_files(
+            dbs, policy, query, filters=filters, scope=scope, limit=limit, offset=offset
+        )
+    _check_limits(limit, offset)
+    conditions = _conditions(policy, filters, scope)
+    if conditions is None or offset >= RANK_CAP:
+        return SearchResults([], 0, capped=False)
+    depth = min(offset + limit, RANK_CAP)
+    where, args = conditions
+    name_from, name_args, name_order, order_args = _name_query(words, where, args)
+    text_from, text_args = _text_query(match, where, args)
+    with _connect(dbs) as conn:
+        by_name = conn.execute(
+            f"SELECT {FILE_COLUMNS} {name_from} ORDER BY {name_order} LIMIT ?",
+            [*name_args, *order_args, depth],
+        ).fetchall()
+        by_text = conn.execute(
+            f"SELECT {FILE_COLUMNS}, m.chunk_id, m.page {text_from} "
+            "ORDER BY m.score, f.mtime_ns DESC, f.relpath LIMIT ?",
+            [*text_args, depth],
+        ).fetchall()
+        name_cond = " AND ".join("instr(steward_fold(f.relpath), ?) > 0" for _ in words)
+        either = (
+            "FROM files f LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "  # noqa: S608 -- only placeholders are interpolated
+            f"WHERE {' AND '.join(where)} AND (({name_cond}) OR f.content_hash IN "
+            f"(SELECT h FROM ({_MATCHES})))"
+        )
+        total = _count(conn, either, [*args, *words, match])
+        scores: dict[str, float] = {}
+        rows: dict[str, Sequence[Any]] = {}
+        for rank, r in enumerate(by_name):
+            scores[r[0]] = scores.get(r[0], 0.0) + 1 / (RRF_K + rank + 1)
+            rows[r[0]] = r
+        text_rows = {r[0]: r for r in by_text}
+        for rank, r in enumerate(by_text):
+            scores[r[0]] = scores.get(r[0], 0.0) + 1 / (RRF_K + rank + 1)
+            rows.setdefault(r[0], r)
+        ordered = sorted(scores, key=lambda fid: (-scores[fid], -rows[fid][4], rows[fid][2]))
+        page = ordered[offset : offset + limit]
+        snippets = _snippets(conn, match, [text_rows[f][7] for f in page if f in text_rows])
+    hits = []
+    for fid in page:
+        t = text_rows.get(fid)
+        hits.append(_hit(rows[fid], snippets.get(t[7], ()) if t else (), t[8] if t else None))
+    capped = total > COUNT_CAP or total > RANK_CAP
+    return SearchResults(hits, min(total, COUNT_CAP, RANK_CAP), capped=capped)
 
 
 def _ns(value: datetime) -> int:

@@ -231,6 +231,8 @@ def _stage_handler(stage: Stage, dbs: Databases, planner: Planner) -> JobHandler
             root=chosen.root,
             dbs=dbs,
             renew=ctx.renew_lease,
+            requires=stage.requires,
+            produces=stage.produces,
         )
         try:
             result = stage.run(sctx) or StageResult()

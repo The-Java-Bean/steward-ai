@@ -281,6 +281,49 @@ pipeline_meta = Table(
 """Small facts about the pipeline, e.g. the stage graph signature of the last full
 planning pass (index revision 0003)."""
 
+# --- content index (index revision 0004) -------------------------------------------
+
+texts = Table(
+    "texts",
+    index_metadata,
+    Column(
+        "content_hash",
+        Text,
+        ForeignKey("blobs.content_hash", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("artifact", Text, primary_key=True),  # `text`, `text:ocr`…
+    Column("part", Integer, primary_key=True),
+    Column("page", Integer),
+    Column("heading", Text),
+    Column("body", Text, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+)
+"""Extracted text, one row per page or section (written by stages through
+`StageContext.write_text`)."""
+
+chunks = Table(
+    "chunks",
+    index_metadata,
+    Column("chunk_id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "content_hash",
+        Text,
+        ForeignKey("blobs.content_hash", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("artifact", Text, nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("source", Text, nullable=False),
+    Column("page", Integer),
+    Column("heading", Text),
+    Column("body", Text, nullable=False),
+    Column("created_at", UTCDateTime, nullable=False),
+    UniqueConstraint("content_hash", "artifact", "seq", name="uq_chunks_position"),
+)
+"""Retrieval units. `chunks_fts` (FTS5, external content, synced by triggers) indexes
+`heading` and `body`; it isn't described here because SQLAlchemy has no FTS5 tables."""
+
 # --- auth and runtime settings (state revision 0004) -------------------------------
 
 USER_ROLES = ("owner",)

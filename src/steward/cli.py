@@ -12,14 +12,14 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import FrameType
-from typing import Annotated, NoReturn
+from typing import Annotated, NoReturn, cast
 
 import typer
 from sqlalchemy import func, select
 
 import steward
 from steward.core import auth as steward_auth
-from steward.core import backup, queue, stages
+from steward.core import backup, content, queue, stages
 from steward.core import logging as steward_logging
 from steward.core.config import (
     CONFIG_DIR_ENV,
@@ -47,7 +47,7 @@ from steward.core.folders.seed import import_seed
 from steward.core.loader import ModuleLoadError, discover, is_builtin
 from steward.core.privacy import PrivacyRules, set_override
 from steward.core.runtime import Runtime, build_runtime
-from steward.core.search import SearchError, SearchFilters, search_files
+from steward.core.search import Mode, SearchError, SearchFilters, search_all
 from steward.sdk import ActionRefused
 
 app = typer.Typer(
@@ -615,6 +615,39 @@ def files_list(
     typer.echo(f"({len(rows)} shown, {total} known)")
 
 
+@files_app.command("text")
+def files_text(
+    path: Annotated[str, typer.Argument(help="library:path of a file")],
+) -> None:
+    """Print the text steward-ai extracted from a file (on the host only; this shows
+    file content, including from locked folders)."""
+    runtime = _ready_runtime()
+    ref = _ref(path)
+    with runtime.dbs.state.read() as conn:
+        row = conn.execute(
+            select(files_table.c.content_hash).where(
+                files_table.c.library_id == ref.library_id, files_table.c.relpath == ref.relpath
+            )
+        ).one_or_none()
+    if row is None:
+        _fail(f"{path} isn't a known file (run `steward scan` first?)")
+    if row.content_hash is None:
+        _fail(f"{path} hasn't been hashed (pending, unreadable or excluded)")
+    with runtime.dbs.index.read() as conn:
+        found = content.text_of(conn, row.content_hash)
+    if not found:
+        _fail("no text extracted (yet); see `steward stages list`")
+    for artifact, parts in found.items():
+        typer.echo(f"== {artifact} ({len(parts)} parts)")
+        for part in parts:
+            where = "  ".join(
+                x for x in (f"page {part.page}" if part.page else "", part.heading or "") if x
+            )
+            if where:
+                typer.echo(f"-- {where}")
+            typer.echo(part.body)
+
+
 # --- stages ---------------------------------------------------------------------
 
 
@@ -902,28 +935,36 @@ def files_sensitivity(
 
 @app.command()
 def search(
-    query: Annotated[str, typer.Argument(help="Words that must all appear in the path.")],
+    query: Annotated[str, typer.Argument(help="Words that must all appear (path or text).")],
     library: Annotated[str | None, typer.Option(help="Only this library.")] = None,
     folder: Annotated[str | None, typer.Option(help="Only inside library:path.")] = None,
     kind: Annotated[str | None, typer.Option(help="document, image, video, audio, text...")] = None,
     limit: int = 20,
+    mode: Annotated[str, typer.Option("--in", help="all (names and text), names or text.")] = "all",
 ) -> None:
-    """Search file names and paths (never inside locked or hidden folders)."""
+    """Search file names, paths and extracted text (never inside locked or hidden
+    folders)."""
+    if mode not in ("all", "names", "text"):
+        _fail("--in must be all, names or text")
     runtime = _ready_runtime()
     with runtime.dbs.state.read() as conn:
         policy = load_policy(conn)
     try:
-        results = search_files(
+        results = search_all(
             runtime.dbs,
             policy,
             query,
             filters=SearchFilters(library=library, folder=folder, kind=kind),
             limit=limit,
+            mode=cast(Mode, mode),
         )
     except SearchError as exc:
         _fail(str(exc))
     for hit in results.hits:
         typer.echo(f"{hit.library_id}:{hit.relpath}  {hit.size} B  {hit.kind or '-'}")
+        if hit.snippet:
+            page = f"p. {hit.page}: " if hit.page else ""
+            typer.echo(f"    {page}{''.join(t if not m else f'[{t}]' for t, m in hit.snippet)}")
     more = "+" if results.capped else ""
     typer.echo(f"({len(results.hits)} shown, {results.total}{more} found)")
 

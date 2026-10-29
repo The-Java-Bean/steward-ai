@@ -106,8 +106,23 @@ def _sampled(f: BinaryIO, size: int, throttle: Throttle) -> tuple[bytes, str]:
 
 # --- MIME types and kinds -----------------------------------------------------------
 
+# Python's built-in table plus ours, never the host's /etc/mime.types: the same file must
+# get the same MIME type on every machine (a slim container image has no such file).
+_MIMETYPES = mimetypes.MimeTypes(filenames=())
+
 _EXTRA_TYPES = {
     ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+    ".doc": "application/msword",
+    ".xls": "application/vnd.ms-excel",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".rtf": "application/rtf",
     ".heic": "image/heic",
     ".heif": "image/heif",
     ".webp": "image/webp",
@@ -173,7 +188,7 @@ def detect_mime(name: str, head: bytes) -> str:
     suffix = Path(name).suffix.lower()
     if suffix in _EXTRA_TYPES:
         return _EXTRA_TYPES[suffix]
-    guessed, _ = mimetypes.guess_type(name, strict=False)
+    guessed, _ = _MIMETYPES.guess_type(name, strict=False)
     if guessed:
         return guessed
     for offset, magic, mime in _MAGIC:

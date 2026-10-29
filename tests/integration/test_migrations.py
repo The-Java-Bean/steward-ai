@@ -79,7 +79,7 @@ def test_migrations_match_schema_definitions(tmp_path: Path, database: str) -> N
             conn,
             opts={
                 "include_name": lambda name, type_, parent: (
-                    not str(name).startswith("alembic_version")
+                    not str(name).startswith(("alembic_version", "chunks_fts"))
                 )
             },
         )

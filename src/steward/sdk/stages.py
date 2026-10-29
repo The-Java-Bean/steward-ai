@@ -8,15 +8,17 @@ core builds a graph from every enabled stage, runs each stage once per unique co
 when its `version` rises or something it depends on is recomputed
 (docs/adr/0011-stage-framework.md).
 
-Stages read files only through `StageContext.open()` (read-only) and store results in
-their module's own `index.db` tables (`<module>_*`) through `StageContext.index_write()`.
-A stage can run more than once for the same content, so writes must be idempotent
-(upserts keyed by content hash).
+Stages read files only through `StageContext.open()` or `StageContext.run_isolated()`
+(read-only) and store results either in the core's content index (`write_text`,
+`write_chunks`: searchable, privacy-filtered by the core) or in their module's own
+`index.db` tables (`<module>_*`) through `StageContext.index_write()`. A stage can run
+more than once for the same content, so writes must be idempotent (upserts keyed by
+content hash; the content-index writes replace what the stage wrote before).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import BinaryIO, Literal, Protocol
@@ -32,6 +34,11 @@ StageStatus = Literal["done", "skipped", "failed"]
 
 ARTIFACT_PATTERN = r"^[a-z][a-z0-9_]*(:[a-z0-9_.-]+)?$"
 """Artifact kinds look like `text`, `text:ocr` or `embedding:<space>`."""
+
+
+MATCH_MARKERS = ("\ue000", "\ue001")
+"""Private-use characters the core uses to mark matches in search snippets. They're
+removed from every text written to the content index."""
 
 
 class FileChanged(Exception):
@@ -80,6 +87,40 @@ class FolderInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class TextPart:
+    """One page or section of extracted text (artifact kinds `text`, `text:ocr`…)."""
+
+    body: str
+    page: int | None = None
+    """1-based page number, for paged documents."""
+    heading: str | None = None
+    """The heading the section starts with (or sits under), if the format has headings."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkPart:
+    """One retrieval unit: what full-text search (and later embeddings) index."""
+
+    body: str
+    page: int | None = None
+    heading: str | None = None
+
+
+IsolationReason = Literal["timed_out", "too_big", "crashed", "error"]
+
+
+class IsolationError(Exception):
+    """`run_isolated` didn't return a result. `reason` is `timed_out`, `too_big` (memory
+    limit), `crashed` (the child died) or `error` (the function raised; `error_type` is
+    the exception's class name). Messages never carry file content."""
+
+    def __init__(self, reason: IsolationReason, error_type: str | None = None) -> None:
+        self.reason = reason
+        self.error_type = error_type
+        super().__init__(f"{reason}: {error_type}" if error_type else reason)
+
+
+@dataclass(frozen=True, slots=True)
 class StageResult:
     """What `run` returns. Returning None means `StageResult()` (done)."""
 
@@ -118,6 +159,41 @@ class StageContext(Protocol):
 
     def renew_lease(self) -> None:
         """Call during long work so the job isn't handed to another worker."""
+        ...
+
+    def run_isolated[T](
+        self,
+        fn: Callable[[BinaryIO], T],
+        *,
+        timeout_s: float,
+        memory_mib: int,
+    ) -> T:
+        """Run `fn(file)` in a separate process with the file opened read-only there, so a
+        hostile file can't hang, crash or bloat the worker. `fn` must be a module-level
+        function (it's pickled by name) and its result picklable. Raises `FileChanged`,
+        or `IsolationError` when there's no result."""
+        ...
+
+    def read_text(self, artifact: str = "text") -> list[TextPart]:
+        """The text a required stage stored for this content (`artifact` must be in this
+        stage's `requires`). Empty if it found none."""
+        ...
+
+    def write_text(self, parts: Sequence[TextPart], *, artifact: str = "text") -> None:
+        """Store this content's text as `artifact` (one of this stage's `produces`),
+        replacing what was stored before."""
+        ...
+
+    def read_chunks(self, artifact: str = "chunks") -> list[ChunkPart]:
+        """The chunks stored for this content as `artifact` (in `requires` or `produces`)."""
+        ...
+
+    def write_chunks(
+        self, chunks: Sequence[ChunkPart], *, source: str, artifact: str = "chunks"
+    ) -> None:
+        """Store this content's chunks as `artifact` (one of this stage's `produces`),
+        replacing what was stored before; `source` names the text artifact they came
+        from. Chunks are full-text searchable at once."""
         ...
 
 

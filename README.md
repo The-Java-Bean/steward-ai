@@ -25,8 +25,10 @@ file managers) through optional integration modules, without requiring any of th
 ### What it does *(planned)*
 - **File manager in the browser** *(implemented)*: browse, preview, upload (large files,
   resumable), download, move, rename and delete (to a trash folder, with undo).
-- **Search:** keyword search over names and metadata; with an AI model connected, full
-  text, OCR of scans, photo captions and meaning-based search.
+- **Search** *(names and full text implemented)*: keyword search over names, metadata
+  and the text of your documents (PDF, Word, OpenDocument, Markdown, HTML, plain text
+  and code); later OCR of scans and, with an AI model connected, photo captions and
+  meaning-based search.
 - **Tags:** automatic tagging from a vocabulary you control.
 - **Chat with your files:** ask questions and get answers that cite the file and page.
   Use the built-in chat page, or any OpenAI-compatible chat client.
@@ -97,7 +99,7 @@ errors. Annotated examples are in [`config/`](config/):
 | File | Holds |
 |---|---|
 | `steward.yaml` | data directory, timezone, log level, trusted proxies, web server address and port (`api:`), Secure cookies, where setup looks for libraries (`setup:`), session lifetimes, login lockout limits |
-| `modules.yaml` | which modules are on, and their settings |
+| `modules.yaml` | which modules are on, and their settings (for example the `documents` limits: file size, text size, pages, parse time and memory, chunk size) |
 | `pipeline.yaml` | background worker threads per lane, retries, retention, schedule timing, discovery (watching, temp-file patterns, disk throttling) |
 | `libraries.yaml` | the folders steward-ai manages (imported with `steward folders import`) |
 | `folders.yaml` | custom folder types, folder mappings, locks and roles (imported the same way) |
@@ -138,13 +140,21 @@ for changes so new and edited files show up within seconds. To scan by hand:
 ```sh
 steward scan                    # every library (or: steward scan main  /  main:Photos)
 steward files list main:Photos  # known files; --missing for ones that disappeared
-steward search invoice 2025     # file names and paths (also /ui/search)
+steward search invoice 2025     # names, paths and text (also /ui/search)
+steward search invoice --in text   # only the text (or --in names)
+steward files text main:Documents/lease.pdf   # what was extracted from a file
 ```
 
-**Search** finds files whose path contains every word (case is ignored; accents
-must match), names first, newest first, with filters for kind (document, image, ...),
-library, folder, size and date. Locked folders, hidden folders and the trash are never
-searched there.
+**Search** looks in two places and merges the results:
+- **names and paths**: every word must appear somewhere in the path (case is ignored;
+  accents must match); files with the words in their *name* rank first;
+- **text**: every word must appear in the extracted text (whole words; case and accents
+  are ignored); files rank by their best matching passage, which is shown with the
+  words highlighted and its page number.
+
+Filters: kind (document, image, ...), library, folder, size and date. Locked folders,
+hidden folders and the trash are never searched there; the Locked Folder has its own
+search (names and text) behind your password.
 
 steward-ai only reads your libraries. It recognizes edits, renames and moves (even
 across libraries, and even when it wasn't running), so a file keeps its identity and a
@@ -158,11 +168,19 @@ For very large libraries, the watcher may need more inotify watches
 (`sysctl fs.inotify.max_user_watches`); without them, changes are still found by the
 6-hourly scan.
 
-### Processing pipeline *(framework implemented; no content stages yet)*
-After a file is found, its content goes through **stages** that modules provide (text
-extraction, OCR, captions… arrive in later releases). Each unique content is processed
-once, however many copies or moves it has, and in the order stages depend on each
-other. Folder types decide which stages run where: `index: metadata` folders get only
+### Processing pipeline *(text extraction implemented; OCR, captions and tags to come)*
+After a file is found, its content goes through **stages** that modules provide. Each
+unique content is processed once, however many copies or moves it has, and in the
+order stages depend on each other.
+
+The built-in `documents` module extracts text from PDF (the text layer; scans without
+one need OCR, which comes next), DOCX, ODT, Markdown (frontmatter is skipped), HTML,
+plain text and code, then cuts it into passages for search. Parsing runs in a separate
+process with time and memory limits (`timeout_s`, `memory_mib` in `modules.yaml`), so
+a broken or hostile file can't stall or crash the worker. Files it can't read
+(password-protected PDFs, damaged files, files over `max_file_mib`) keep name search and
+show as *skipped* with the reason in `steward stages list`. Password vaults, keys and
+other `excluded` files are never opened at all. Folder types decide which stages run where: `index: metadata` folders get only
 name/metadata stages, and a type can add or remove stages
 (`stages: {add: [ocr], remove: [caption]}`). When a module updates a stage, the worker
 re-runs it, and whatever depends on it, in the background.
@@ -379,6 +397,12 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
+- **Phase 3 (indexing and tagging): in progress, six chunks (plan §19).** Chunk 1 done:
+  the core content index (`texts`, `chunks`, FTS5) written through `StageContext`,
+  isolated parsing (`run_isolated`), the `documents` module (extract + chunk), and
+  full-text search merged with name search (ADR 0021). Next: chunk 2 (OCR and
+  throughput), then model roles + `search` (embeddings), `photos`, `fields` + `tags`,
+  evals/reindex/acceptance.
 - **Phase 2 (files, Locked Folder, shares): all 5 chunks done** (1: module web SDK +
   `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018; 3: the Locked
   Folder `/ui/locked`, ADR 0019; 4: share links, the `shares` module and the core `/s/`
@@ -399,7 +423,7 @@ steps, log). Read them first if present. A maintainer-only design document
 ### What exists, file by file
 | Path | What it is |
 |---|---|
-| `pyproject.toml` | Project `steward-ai` (import package `steward`, CLI `steward`); deps `pydantic`, `typer`, `sqlalchemy` 2.1, `alembic`, `pyyaml`, `blake3`, `watchdog`, `argon2-cffi`, `fastapi` (≥0.162; lazy router includes, see `iter_route_contexts`), `uvicorn`, `jinja2`, `python-multipart`; dev group (incl. `httpx2` for `TestClient`); uv workspace with `examples/hello-module`; ruff, mypy (strict, pydantic plugin), pytest (`pythonpath = tests`) and import-linter config |
+| `pyproject.toml` | Project `steward-ai` (import package `steward`, CLI `steward`); deps `pydantic`, `typer`, `sqlalchemy` 2.1, `alembic`, `pyyaml`, `blake3`, `watchdog`, `argon2-cffi`, `fastapi` (≥0.162; lazy router includes, see `iter_route_contexts`), `uvicorn`, `jinja2`, `python-multipart`, `pypdf`, `cryptography` (pypdf's AES); dev group (incl. `httpx2` for `TestClient`); uv workspace with `examples/hello-module`; ruff, mypy (strict, pydantic plugin), pytest (`pythonpath = tests`) and import-linter config |
 | `uv.lock`, `.python-version` (3.13) | Locked dependencies; dev Python |
 | `Makefile` | `sync`, `check` (= `lint typecheck imports test headers licenses`), `format`, `notices`, `image`, `clean` |
 | `src/steward/__init__.py` | `__version__` from package metadata |
@@ -408,7 +432,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/sdk/health.py` | `HealthResult(status, detail)`, `HealthStatus` (`ok`/`warn`/`fail`), `HealthCheck` (async no-arg callable) |
 | `src/steward/sdk/jobs.py` | `Lane` (`io`, `cpu`, `llm-local`, `llm-remote`, `events`, `executor`), `LANES`, `WORKER_LANES`, `JobContext(job_id, type, payload, attempt, renew_lease, state)`, `JobHandler`, `PermanentJobError` |
 | `src/steward/sdk/events.py` | `Event(event_id, type, version, payload, actor, occurred_at)`, `EventHandler` |
-| `src/steward/sdk/stages.py` | `Stage` (name, version, produces, run, requires, lane, applies_to, default, index; `short_name`), `StageContext` protocol (`stage`, `blob`, `file`, `folder`, `attempt`, `open()`, `index_read()`, `index_write()`, `renew_lease()`), `StageResult(status, reason, model, prompt_version)`, `BlobInfo`, `FileInfo`, `FolderInfo`, `FileChanged`, `StageRunner`, `AppliesTo`, literals `IndexPolicy`, `Sensitivity` (also used by `core.folders.types`), `StageStatus`, `ARTIFACT_PATTERN` |
+| `src/steward/sdk/stages.py` | `Stage` (name, version, produces, run, requires, lane, applies_to, default, index; `short_name`), `StageContext` protocol (`stage`, `blob`, `file`, `folder`, `attempt`, `open()`, `index_read()`, `index_write()`, `renew_lease()`, `run_isolated(fn, timeout_s=, memory_mib=)`, `read_text`/`write_text(parts, artifact=)`, `read_chunks`/`write_chunks(chunks, source=, artifact=)`), `StageResult(status, reason, model, prompt_version)`, `TextPart(body, page, heading)`, `ChunkPart`, `IsolationError(reason, error_type)` + `IsolationReason`, `MATCH_MARKERS` (U+E000/U+E001), `BlobInfo`, `FileInfo`, `FolderInfo`, `FileChanged`, `StageRunner`, `AppliesTo`, literals `IndexPolicy`, `Sensitivity` (also used by `core.folders.types`), `StageStatus`, `ARTIFACT_PATTERN` |
 | `src/steward/sdk/ui.py` | `UiPage(path, router, title, nav, templates, static, badge)`, `Badge` (`(StateAccess) -> int`, shown next to the nav entry when not 0), `UI_PATH_PATTERN` (`/ui/<slug>`); `Registry.ui_page(name, router, *, path, title, nav=True, templates=, static=, badge=)`, `Registrations.ui_pages()` (point `ui_page`) |
 | `src/steward/sdk/state.py` | Module state access: `StateAccess` protocol (`read()`/`write()` → SQLAlchemy `Connection`; the core's `Database` fits), `UTCDateTime` (moved here from the core; `core.db.types` re-exports it), `utcnow()` |
 | `src/steward/sdk/shares.py` | Share links (ADR 0020): `TOKEN_PATTERN` (22 URL-safe chars), `ShareRequest` protocol (`token`, `subpath`, `method`, `query`, `form`, `client_ip`, `user_agent`, `state`, `form_token`, `base_url`, `now`, `cookie`, `open(path, kind, only_files=)` → `SharedItem`, `render` (module template, `public.html` layout), `redirect` (under `base_url`), `set_cookie` (path-scoped, Lax), `not_found`), `SharedItem` (`name`, `kind`, `entry`, `listing` → `SharedListing`, `read_text`, `file_response`, `zip_response`; paths relative to the item), `SharedListing`, `ShareLinkHandler`; `Registry.share_links(handler)` (point `share_links`, name = module), `Registrations.share_links()` |
@@ -429,7 +453,9 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/stages/graph.py` | `build_graph(stages)` → `StageGraph(stages in topo order, producers)`: `root` (`core.hash`), `upstream(name)`, `downstream[name]`, `matching(names)` (full or short names), `signature`; `StageGraphError(ModuleLoadError)` |
 | `src/steward/core/stages/planner.py` | `Planner(dbs, graph, max_attempts=)`: `plan_hashes`, `plan_files`, `plan_all(renew=)`, `ready`, `enqueue`, `present_files`; `Eligibility(graph, policy)` (folder settings cache, `enabled_stages(file)`, `candidates(stage, blob, files)`); `run_status(graph, runs)` → (current, usable); `RunRecord`, `Candidate`, `stage_job_type` (`core.stage.<name>`) |
 | `src/steward/core/stages/jobs.py` | `register_hash_stage` (declares `core.hash`), `register_stage_jobs` (per-stage jobs, `core.stages.plan`, `core.stages.full`, daily 04:20 schedule; returns the `Planner`), `tick` (housekeeping trigger), `enqueue_full_pass`, `full_pass_needed`, the stage job handler (`_stage_handler`, `_record`) |
-| `src/steward/core/stages/context.py` | `Context`: the `StageContext` implementation (`O_NOFOLLOW` open + size/mtime check, `unchanged()`) |
+| `src/steward/core/stages/context.py` | `Context`: the `StageContext` implementation (`O_NOFOLLOW` open + size/mtime check, `unchanged()`; `requires`/`produces` from the stage gate the content-index reads/writes (`_allowed`); `run_isolated` delegates to `isolate.py`) |
+| `src/steward/core/stages/isolate.py` | `run_isolated(path, size, mtime_ns, fn, timeout_s=, memory_mib=, renew=)`: forkserver child (`_preload` sets the forkserver preload once: `__main__`, `steward.sdk`, this module, `fn`'s module), `RLIMIT_AS` + `RLIMIT_CPU`, own `O_NOFOLLOW` open + check, pipe back `("ok"|"changed"|"memory"|"error", value)`; wall-clock kill; exit by SIGXCPU → `timed_out`, SIGKILL → `too_big`, else `crashed`; `POLL_S` renews the lease while waiting |
+| `src/steward/core/content.py` | Content index access: `write_text`/`read_text`, `write_chunks`/`read_chunks` (replace per content hash + artifact; empty chunk bodies dropped), `text_of` (CLI), `clean` (strip NUL and `MATCH_MARKERS`, valid UTF-8) |
 | `src/steward/core/auth/service.py` | `Auth(db, AuthConfig)`: `has_owner`, `create_owner`, `get_user`, `list_users`, `reset_password`, `unlock`; `login` → `NewSession(secret, principal)`; `authenticate_session`, `logout`, `list_sessions`, `revoke_session`, `revoke_all_sessions`; `settings`, `reauth`, `is_recent`, `require_recent_auth`, `update_settings` (needs recent auth), `set_settings_from_host`, `change_password`; `create_token` (session + recent auth), `issue_token` (no checks; CLI), `authenticate_token`, `list_tokens`, `revoke_token`; `prune`, `failed_attempts`, `lockout_for`. Value objects `User`, `Principal` (`via` session/token, `can(scope)`, `actor`), `SessionInfo`, `TokenInfo`, `AuthSettings`; errors `AuthError` > `LoginFailed`, `LockedOut` (`retry_after`), `ReauthRequired`, `NotAllowed`, `AccountError`; `normalize_username`, `TOKEN_SCOPES` |
 | `src/steward/core/auth/passwords.py`, `common_passwords.txt` | argon2id `hash_password`/`verify_password`/`needs_rehash`/`dummy_verify` (NFKC, max 2 concurrent hashes), rules `problems`/`check` → `WeakPasswordError` |
 | `src/steward/core/auth/tokens.py` | session secrets, `stw_` API tokens, `digest` (SHA-256), `hint`, `csrf_token`/`check_csrf` (HMAC of the session secret) |
@@ -443,7 +469,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/executor/executor.py` | `Executor(dbs, actions, clock=, max_attempts=, rules=)` (`Runtime.executor` passes `runtime.privacy`; `_view(policy)`) (sensitive = type flag, `plan.sensitive` or a locked path): `preview`, `run(name, params, actor=, confirmed=, proposal_id=)`, `undo(entry_id, actor=, confirmed=)`, `get`, `entries(limit=, before=)`; `JournalEntry` (`undoable`, `paths`), `Preview`, `ActionFailed`, `SensitiveActionError`. One transaction per action: DB ops, file/folder identities follow moves, journal row, `action.applied` event, `core.scan` jobs (priority 20) |
 | `src/steward/core/privacy/` | `rules.py` `matches(relpath, pattern)`, `PrivacyRules` (`from_config`, `is_secret`, `level_for`); `classify.py` `Classifier` (`load(conn, rules)`, `for_path`, `for_files`) → `FileClass(sensitivity, locked, visible, shareable, known)`, `UNKNOWN`; `overrides.py` `set_override(conn, file_id, level|None, actor=)` (event `file.sensitivity_changed`); `sharing.py` `SharingRules(policy, rules, overrides by (lib, relpath))` (`load(conn, policy, rules)`, cached `check(lib, relpath)` → `PathPrivacy`: path judged as file (parent settings) and folder (own), `Visibility.is_hidden`, rules, overrides; reasons), `HIDDEN` |
 | `src/steward/core/llm/` | `transport.py` `ChatRequest`, `EmbedRequest`, `ModelResponse`, `ModelTransport`, `OpenAICompatibleTransport` (stdlib urllib), `ModelUnavailable`; `gateway.py` `Gateway(config, state_db, privacy, transport)` `.route(role)`, `.call(role, request, provenance=, purpose=, taint=, allow_local_fallback=)` → `GatewayResult`; `PrivacyViolation`, `RoleNotConfigured`, `check_llm_config` (refuses remote endpoints for now). Only this package may use `urllib`/`openai` |
-| `src/steward/core/search.py` | `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)` (locked scope = locked folders minus `concealed`); raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `_folder_sets`, `Visibility(policy)` (`hidden`, `locked`, `concealed` = hidden for non-lock reasons; `is_hidden`, `is_locked`, `in_locked_view`, `locked_roots()`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
+| `src/steward/core/search.py` | `search_files` (names), `search_text` (FTS5 over `idx.chunks_fts`, best chunk per content via `_MATCHES` (min `rank`, bare columns), `_snippets` with `MATCH_MARKERS` → `split_snippet` → `Snippet` segments), `search_all(..., mode="all"|"names"|"text")` (RRF, `RRF_K` 60, `RANK_CAP` 1000, total from one OR query); all share `_conditions(policy, filters, scope)`; `fts_query(words)` (each word quoted; None without alnum); `SearchHit` has `snippet`, `page`; `Mode`; signature `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)` (locked scope = locked folders minus `concealed`); raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `_folder_sets`, `Visibility(policy)` (`hidden`, `locked`, `concealed` = hidden for non-lock reasons; `is_hidden`, `is_locked`, `in_locked_view`, `locked_roots()`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
 | `src/steward/core/backup.py` | `backup(runtime, reason=, keep=)` → `BackupInfo` (online-backup copies of both DBs, `state.json`, `manifest.json`, `.partial-` then rename, 0600, prune), `export_state(runtime, strict=)` (`CORE_EXPORT_TABLES` minus secret columns + module exporters), `list_backups`, `latest_backup`, `prune`, `before_migrate(runtime)` (pending revision on existing DBs and no backup within `max_age_before_migrate_hours` → back up or raise `BackupError`) |
 | `src/steward/api/security.py` | The guard (app-wide dependency): `access(level)` decorator for core routes (`public`, `setup`, `session` default, `principal`), `level_of`, `ApiState(auth, api, trusted_proxies, setup_token)` (`has_owner` cached once true), `guard` (sets `request.state.principal/session_secret/csrf/presession/ip/https`), refusals `Refused(status, message)`, `NeedLogin`, `SetupRequired`, `SetupClosed`; `safe_next`, `is_https`; cookie names `steward_session`, `steward_setup`, `steward_presession` |
 | `src/steward/api/app.py` | `create_app(runtime, setup_token=)`: core routers, module pages (`UiPageError` for reserved/duplicate paths, non-`APIRoute` routes or two templates/static dirs per module; module static at `/static/m/<module>` mounted before `/static`; sets `app.state.module_pages`, `templates`, `steward_web`, `link_builders`), `/static`, `NotFound` → 404, `_check_routes` (fail closed), exception handlers (login redirect / 401 JSON, `/setup` redirect / 503, re-auth redirect, 429 + `Retry-After`, HTML or JSON errors), security headers middleware; `CORE_UI_PATHS`; also `app.state.share_links` = `(module, handler)` or None (`_share_links`: more than one → `UiPageError`), `app.state.page_paths`, nav entries carry badges |
@@ -464,6 +490,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy, shared=None)` (internal `BrowseScope` adds `shared`: `SharedArea(library_id, relpath, sharing, allowed)` = inside the item, `SharingRules.check(...).shareable`, snapshot relpaths),  (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `locked_folders`, `listing`, `entry`, `by_kind` (search with empty query), `search`, `unlock_preview` (policy copy with the lock removed via `dataclasses.replace`, counts from `files`/`folders`), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
 | `src/steward/api/share.py`, `src/steward/api/routes/shares.py` | Share links: `/s/{token}` and `/s/{token}/{rest:path}` (GET/POST, `@access("public")`; bad token or no provider → `not_found`; form read from the guard's cache; handler run in the threadpool; `NotFound` → the 404 page; `PUBLIC_HEADERS` no-store/no-referrer/noindex added). `ShareHandle` (the `ShareRequest`; `render` forces `principal=None`, `nav=[]`), `PublicItem` (the `SharedItem`: `Browser` in the `shared` scope, `Entry.path` made relative, no `file_id`), `_snapshot` (file ids → relpaths + their folders), `not_found` (`share_missing.html`) |
 | `src/steward/api/web.py` | The core's `Web` implementation (also `state`, `page_url` from `app.state.page_paths`, `link_to`, `absolute_url` (`api.public_url` or the request's scheme/netloc), `WebFiles.privacy` via `SharingRules`): `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`; also for `locked_folders`/`unlock_preview`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
+| `src/steward/modules/documents/` | Built-in module `documents` 0.1.0 (entry point, on by default; ADR 0021): `__init__.py` `DocumentsModule`, `DocumentsConfig` (`max_file_mib` 200, `max_text_mib` 16, `max_pages` 2000, `timeout_s` 120, `memory_mib` 1024, `chunk_chars` 1200, `chunk_overlap` 150), stages `documents.extract` (version `EXTRACT_VERSION*100 + extractors.VERSION` = 101; `run_isolated(partial(extractors.extract, …))`; `IsolationError` → `skipped` with `SKIP_REASONS`/`ISOLATION_REASONS`, text cleared) and `documents.chunk` (v1); `applies` = size limit + `extractor_for(mime, kind)`; `extractors.py` (`Limits`, `Extracted(parts, truncated)`, `NotText`, `EncryptedDocument`, `UnsafeDocument`, `decode`, `extract_plain|markdown|html|pdf|docx|odt`, `BY_MIME`, `extractor_for`, `extract` (child entry; disables logging)); `chunker.py` (`chunk_parts(parts, size=, overlap=)`, `normalize`) |
 | `src/steward/modules/shares/` | Built-in module `shares` 0.1.0 (entry point, on by default; ADR 0020): `__init__.py` `SharesModule` (state migrations `migrations/state/0001_shares.py`, actions, page `shares.page` at `/ui/shares` with `badge=store.count_no_expiry`, `share_links(public.handle)`, job + `Every(15 min)` schedule `shares.expire` (lane `io`, `expire(ctx)`), exporter `store.export`); `store.py` (tables `shares_links`, `shares_snapshot`, `shares_access`; `Share` (`status(now)`, `active`, `ended`), `get`, `by_token`, `listing(past=, since=)`, `count_no_expiry`, `snapshot_ids`, `accesses`, `record` (counts all but `password_failed`), `failures`, `insert_share`, `change`/`end` (only while not ended), `expire_due`, `export` (no token/hash, `has_password`)); `credentials.py` (`new_token`, `new_share_id`, `suggest_password`, argon2 `hash_password`/`verify_password` (semaphore 2, `_hasher` patched in tests), `make_grant`/`check_grant` (HMAC keyed by the hash), `GRANT_COOKIE`, 12 h); `actions.py` (`shares.create` `CreateParams(path, expires_at, password, snapshot, share_id)`, `shares.update` `UpdateParams(share_id, expiry keep/set/never, expires_at, password_change keep/set/remove, new_password)`, `shares.revoke` `RevokeParams(share_id, reason revoked/undone)`; secrets in `Plan.transient`); `public.py` (`handle`: token → active share → password/grant → `open` → zip/raw/page; failures limit 10/address, 100/share per 15 min → 429; access log); `routes.py` (`/ui/shares` list (`status`, `q` on shown names, `age`), `GET|POST /new` (dialog; `created.html` shows link + password once), `GET /{id}`, `GET|POST /{id}/edit`, `POST /{id}/revoke`, `POST /undo`; hidden items → `name=None`); templates `list`, `new`, `created`, `detail`, `edit`, `errors`, `_row_item`, `_link`, `public/password|file|folder`; static `shares.css`, `shares.js` (copy buttons) |
 | `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.3.0 (Share links via `web.page_url("shares.page")` in the normal scope only) (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (pages `files_ui.page` at `/ui/files` and `files_ui.locked` at `/ui/locked` "Locked Folder", same `templates/` + `static/`, link builder `files_ui.links`); `routes.py` `make_router(scope)` → `router` (normal) and `locked_router` (router dependency `_gate`: `recently_authenticated()` else `require_reauth()`): `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries / the only library (normal) or `locked.html` list of `locked_folders()` (locked); `did`/`n`/`undo` → `done_notice` + Undo, rendered together by `_undo.html` as one `.notice-bar`; the key isn't `notice` so the core layout doesn't show it a second time), `GET /view`, `GET /raw` (`inline=1`), `GET /zip`, `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker `to=`, `to_scope=` honoured only in the locked router; moving out needs `confirm_out` else 409), `GET|POST /delete`, `GET|POST /lock` (normal: lock, `permanent` optional; locked: only make permanent), `POST /undo`; locked only: `GET /search?q=`, `GET|POST /unlock` (preview page, then `folder.unlock`, redirect to `/ui/files`). Templates get `base`/`scope`: `browse`, `kind`, `libraries`, `locked`, `search`, `lock`, `unlock`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo`, `_back`, `_found` |
 | `src/steward/core/executor/uploads.py` | `Uploads(dbs, executor, UploadsConfig, clock=)` (`Runtime.uploads`): `start(folder, name, size, actor=, confirmed=)` (checks; creates `UPLOAD_PREFIX + id` exclusively; `SensitiveActionError` for locked folders unless `confirmed`), `get`, `list_open(actor=)`, `write(id, offset, data, actor=)` (per-upload `threading.Lock`; offset must equal `received`; truncates a longer temp file; `pwrite` + `fsync`), `finish(id, actor=, name=)` (runs `file.upload` with `confirmed or info.confirmed`), `cancel`, `expire()`; `UploadInfo` (`path`, `temp`, `as_dict`), errors `UploadNotFound`, `UploadConflict(suggestion)`, `OffsetMismatch(offset)` (all `ActionRefused`); `FREE_SPACE_MARGIN` 64 MiB |
@@ -473,8 +500,10 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/locked_support.py`, `tests/integration/test_locked_folder.py`, `tests/privacy/test_locked_routes.py` | `LockedEnv` (loads `files_ui` and `shares`; library with `private` type folder, locked `vault` with its own locked `vault/own`, `SECRET_NAME`/`SECRET_CONTENT` markers, `forget_reauth()`); the Locked Folder end to end (gate on every route, window 0, root list without trash, full file manager, move out with confirmation, search/kinds, lock + undo, permanent locks from UI/API/executor/settings refused, host unlock, unlock preview, type-locked folders); the route walk (its env also has a share whose item is in a locked folder, and requests to its `/s/` link on every share route): every route × locked paths in every parameter, non-recent session and API token leak nothing, recent session only via `SHOWS_LOCKED` |
 | `tests/integration/test_shares.py` | `ShareEnv` (`LockedEnv` + excluded `*.key`, local-only override, locked `docs/closed`, custom non-shareable type, trash file; `create()`): every refusal rule, parameters, no-expiry sensitivity, no secrets in the journal, password pages + grants + rate limit, folder listings/zips leaving out unshareable things and traversal, snapshots, locking after sharing (404 + redacted owner pages), identical 404s, the expiry job, undo/revoke, update undo, the dialog, re-auth for no expiry + nav badge, Past, editing, no share links in the Locked Folder, exporter, module off, two providers |
 | `tests/acceptance/test_phase2.py` | Phase 2 acceptance (plan §19), one test per criterion, each from a fresh install finished through the setup wizard over HTTP (`Install`: builds the runtime like `steward api`, `start()`/`stop()`/`restart()` keeping the browser's cookies, `scan()` stands in for the worker, `forget_reauth()`/`reauth()`, `token_client()`, `visitor()`), parametrized over two `Layout`s (locked folder chosen in the wizard vs. locked from Files). Upload: chunks, a connection dropped mid-chunk (raw ASGI `http.disconnect`, `_put_and_drop`), server restart, resume, byte-identical. Locked: every normal page/search/zip/journal/`/api/v1` read leaks no `SECRET_NAME`/`SECRET_CONTENT` (non-recent session and API token; queries use `SECRET_QUERY` because pages echo `q`), `_assert_normal_views_work` proves those requests really list/zip; upload into the Locked Folder. Permanent: ten removal routes each after a fresh password, still locked; host CLI `folders unlock --permanent` works. Shares: no-expiry warning + re-auth + badge (dialog and `/api/v1/actions/shares.create`); revoke → Past, every `/s/` URL 404 identical to an unknown token |
+| `tests/doc_fixtures.py`, `tests/isolate_helpers.py` | Documents built in code (`make_pdf(pages)`, `make_encrypted_pdf`, `make_docx([(style, text)], doctype=)`, `make_odt([(is_heading, text)])`); functions `run_isolated` can pickle by name (sleep, spin, eat memory, `os._exit`, raise with content) |
+| `tests/unit/test_documents_extract.py`, `tests/integration/test_isolate.py`, `test_documents.py`, `test_content_index.py` | Extractors (encodings, frontmatter, fences, scripts, PDF pages/limits/encryption/owner-only password, DOCX/ODT headings, entity and member-size refusal) and chunker; isolation (timeout, CPU, memory, crash, error type only, changed file, symlink, renew); pipeline on two layouts (`Env`: every format, locked/excluded/archive/media folders, skipped reasons, edits reindexed, idempotent re-run, `/ui/search` snippets, `/api/v1/search?in=`, CLI `files text`/`search --in`); content-index writes, FTS triggers, cascade, stages can't write undeclared artifacts |
 | `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
-| `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `search QUERY [--library --folder --kind --limit]`, `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
+| `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `files text LIB:PATH` (all text artifacts with page/heading lines), `search QUERY [--library --folder --kind --limit --in all|names|text]` (snippets with `[match]`), `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
 | `examples/hello-module/` | Out-of-tree module `hello` 0.3.0 (dist `steward-hello`): config `greeting`; registers health check `hello`, stage `hello.lines` (text files ≤10 MiB → `hello_line_counts` in `index.db`, migration `migrations/index/0001`), subscriber `hello.greet` (`file.discovered`, logs), UI page `hello.page` at `/ui/hello`. Dev dependency only; not in the image |
 | `tests/unit/test_auth_primitives.py`, `tests/integration/test_auth.py`, `test_auth_cli.py` | Password hashing/rules, secrets/CSRF, client IP, settings bounds; the `Auth` service end to end (sessions, expiry, lockouts, re-auth windows incl. 0 and off, tokens can't do session things, password change/reset, prune, health); CLI. Integration tests patch `passwords._hasher` with cheap parameters (fixture `fast_hashes`) |
@@ -490,7 +519,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/executor_support.py`, `tests/executor/test_action_safety.py`, `tests/integration/test_executor.py` | `ExecEnv` (runtime + library + scan/map/lock helpers), `build_tree`, `snapshot`; the safety harness parametrized over every registered action's `examples` (`NO_EXAMPLES = {"folder.unlock"}`); executor flows (trash, locked trash, edits, journal, events, identities) |
 | `tests/privacy/test_privacy_suite.py`, `tests/unit/test_privacy_rules.py` | Gateway with a fake transport: every plan §9.6 case, log scan for content, trust/remote config errors, only `core.llm` uses `urllib`/`openai`; rule matching |
 | `tests/integration/test_search.py`, `test_backup.py`, `test_api_v1.py` | Search on two layouts (hidden/locked/trash excluded, filters, Unicode); backups, prune, export contents, pre-migrate backup; `/api/v1` and the new UI pages (tokens never see locked folders or change anything, session actions + undo, journal redaction, OpenAPI, folder unlock re-auth) |
-| `docs/adr/` | ADRs 0001–0019, index, template |
+| `docs/adr/` | ADRs 0001–0021, index, template |
 | `docs/modules.md` | Module authoring guide |
 | `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | Keep a Changelog; generated by `make notices` |
 
@@ -766,6 +795,34 @@ steps, log). Read them first if present. A maintainer-only design document
 - Manual browser runs: a sandbox instance + Playwright (see the handoff); not part of
   `make check`.
 
+### Content index, documents, full-text search (implemented; ADR 0021)
+- Index revision `0004`: `texts` (PK content_hash+artifact+part), `chunks` (`chunk_id`
+  PK, unique content_hash+artifact+seq, `source`), FTS5 `chunks_fts` (external content,
+  triggers `chunks_fts_insert|delete|update`, `rank` = `bm25(2.0, 1.0)`; use the `rank`
+  column, not `bm25()`, which can't sit inside aggregates). Both tables cascade from
+  `blobs`. `test_migrations` skips `chunks_fts*` in the schema-drift comparison
+  (SQLAlchemy has no FTS5 tables).
+- The content index is **core** (no `<module>_` prefix); modules reach it only through
+  `StageContext` (artifact names checked against `requires`/`produces`).
+- Search: one `_conditions` builder for every mode (scope rules in SQL); FTS queries are
+  quoted words only; snippets use `MATCH_MARKERS` and come back as segments, so
+  templates never use `|safe` (`search.html`, `files_ui/_found.html` render `<mark>`).
+  `/ui/search` and `/api/v1/search` take `in=all|names|text` (alias of `mode`); API
+  validation errors answer 400. `Browser.search` → `search_all` (Locked Folder search
+  finds text; `by_kind` = empty query → name search).
+- `run_isolated`: never fork the worker; forkserver children must unpickle `fn` by
+  module name (tests put child functions in `tests/isolate_helpers.py`). The preload is
+  set once, before the forkserver starts; a script without a `__main__` guard breaks
+  (the forkserver imports `__main__`; the `steward` console script is guarded).
+- Discovery's MIME detection uses `mimetypes.MimeTypes(filenames=())` + `_EXTRA_TYPES`
+  (office formats); the container's Python lacks `.docx`/`.odt` in its built-in table,
+  so keep explicit entries for anything a stage keys on.
+- `LockedEnv` (`tests/locked_support.py`) now loads `documents` and drains the worker
+  once, so the locked-route walk also covers text search.
+- Not yet: OCR (`text:ocr`), optional stage inputs, an `Extractor` extension point,
+  pruning text of blobs no file has, `steward reindex`, a per-file "indexing status"
+  view.
+
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
   version tables `alembic_version_<owner>`.
@@ -871,7 +928,7 @@ evals/   config/*.example.yaml
 ### Tech stack
 Python 3.12+ (3.13 in the image and for development), uv, FastAPI, Pydantic v2, SQLAlchemy 2 Core + Alembic, SQLite (WAL) with
 FTS5 and sqlite-vec, `openai` SDK against OpenAI-compatible endpoints, watchdog,
-BLAKE3, pypdf + docling, ocrmypdf + Tesseract, exiftool, argon2-cffi, Jinja2 + htmx,
+BLAKE3, pypdf (+ cryptography; docling maybe later, optional), ocrmypdf + Tesseract, exiftool, argon2-cffi, Jinja2 + htmx,
 Typer, pytest + hypothesis, ruff, mypy, import-linter.
 
 ### Roadmap
@@ -879,7 +936,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
 2. ~~File manager, Locked Folder, built-in shares~~ *(done: module web SDK + `files_ui`, resumable uploads, Locked Folder, share links, acceptance tests)*.
-3. Indexing and tagging (documents, search, fields, tags, photos).
+3. Indexing and tagging *(in progress: content index, `documents`, full-text search done; next OCR)*: documents, search, fields, tags, photos.
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).
 6. Background intelligence (`tag_gen`, `dedupe`, `digest`).
@@ -895,7 +952,8 @@ uv run steward folders import | scan | files list   # libraries/folders, discove
 uv run steward stages list | stages plan            # pipeline stages
 uv run steward user list | reset-password | unlock | sessions | settings
 uv run steward tokens list | create LABEL --scope read | revoke ID
-uv run steward search WORDS | journal list | journal undo ID | files sensitivity LIB:PATH LEVEL
+uv run steward search WORDS [--in all|names|text] | files text LIB:PATH   # search; extracted text
+uv run steward journal list | journal undo ID | files sensitivity LIB:PATH LEVEL
 uv run steward backup | export --output F            # backups (also nightly + before migrations)
 make check                      # lint typecheck imports test headers licenses
 make format                     # ruff format + ruff check --fix
