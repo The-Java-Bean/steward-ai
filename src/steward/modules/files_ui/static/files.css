@@ -45,3 +45,4 @@ ul.folders li, ul.libraries li { padding: 0.3rem 0; border-bottom: 1px solid var
 .upload-list .upload-actions:empty { display: none; }
 .upload-list li.failed .upload-state { color: var(--err-fg); }
 .upload-list li.done .upload-state { color: var(--ok-fg); }
+.checkbox { display: flex; gap: 0.5rem; align-items: baseline; margin: 0.75rem 0; }

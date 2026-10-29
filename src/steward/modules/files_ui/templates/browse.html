@@ -7,11 +7,11 @@
 {% include "files_ui/_crumbs.html" %}
 {% include "files_ui/_undo.html" %}
 <h1>{{ listing.name }}</h1>
-<p class="hint">Folder type <strong>{{ listing.type_name }}</strong>{% if not listing.writable %} · read-only{% endif %}{% if not listing.shareable %} · not shareable{% endif %}</p>
+<p class="hint">Folder type <strong>{{ listing.type_name }}</strong>{% if not listing.writable %} · read-only{% endif %}{% if not listing.shareable and scope == 'normal' %} · not shareable{% endif %}{% if scope == 'locked' %} · locked{% if listing.permanent %} permanently{% endif %}{% if listing.lock_from and listing.lock_from != listing.path %} (because <a href="{{ base }}?path={{ listing.lock_from|urlencode }}">{{ listing.lock_from }}</a> is){% endif %}{% endif %}</p>
 
 <div class="toolbar">
   {% if listing.writable %}
-  <form method="post" action="/ui/files/mkdir" class="inline-row">
+  <form method="post" action="{{ base }}/mkdir" class="inline-row">
     <input type="hidden" name="csrf_token" value="{{ form_token }}">
     <input type="hidden" name="folder" value="{{ listing.path }}">
     <label class="sr-only" for="new-folder">New folder name</label>
@@ -19,11 +19,17 @@
     <button type="submit" class="small">New folder</button>
   </form>
   {% endif %}
-  <a class="button small secondary" href="/ui/files/zip?path={{ listing.path|urlencode }}">Download folder (zip)</a>
+  <a class="button small secondary" href="{{ base }}/zip?path={{ listing.path|urlencode }}">Download folder (zip)</a>
+  {% if scope == 'normal' and listing.relpath %}
+  <a class="button small secondary" href="{{ base }}/lock?path={{ listing.path|urlencode }}">Lock folder…</a>
+  {% elif scope == 'locked' and listing.lock_from == listing.path and not listing.permanent %}
+  <a class="button small secondary" href="{{ base }}/unlock?path={{ listing.path|urlencode }}">Unlock…</a>
+  <a class="button small secondary" href="{{ base }}/lock?path={{ listing.path|urlencode }}">Make the lock permanent…</a>
+  {% endif %}
 </div>
 
 {% if listing.writable %}
-<section class="uploads" id="uploads" data-folder="{{ listing.path }}" data-scope="normal" data-csrf="{{ form_token }}" hidden>
+<section class="uploads" id="uploads" data-folder="{{ listing.path }}" data-scope="{{ scope }}" data-csrf="{{ form_token }}" hidden>
   <div class="dropzone" id="dropzone">
     <span>Drop files here to upload them, or</span>
     <label class="button small">Choose files<input type="file" id="upload-input" multiple class="sr-only"></label>
@@ -34,7 +40,7 @@
 {% endif %}
 
 {% if listing.entries %}
-<form method="get" action="/ui/files/zip" id="selection">
+<form method="get" action="{{ base }}/zip" id="selection">
 <table class="files">
   <thead><tr><th class="pick"><span class="sr-only">Select</span></th><th>Name</th><th>Kind</th><th class="num">Size</th><th>Modified</th><th></th></tr></thead>
   <tbody>
@@ -42,16 +48,16 @@
     <tr>
       <td class="pick"><input type="checkbox" name="path" value="{{ e.path }}" aria-label="Select {{ e.name }}"></td>
       {% if e.kind == 'dir' %}
-      <td><a href="/ui/files?path={{ e.path|urlencode }}" class="dir">{{ e.name }}/</a></td>
+      <td><a href="{{ base }}?path={{ e.path|urlencode }}" class="dir">{{ e.name }}/</a></td>
       <td>folder</td><td class="num"></td>
       {% else %}
-      <td><a href="/ui/files/view?path={{ e.path|urlencode }}">{{ e.name }}</a></td>
+      <td><a href="{{ base }}/view?path={{ e.path|urlencode }}">{{ e.name }}</a></td>
       <td>{{ e.file_kind or '' }}</td><td class="num">{{ e.size|filesizeformat }}</td>
       {% endif %}
       <td>{{ e.modified.strftime('%Y-%m-%d %H:%M') if e.modified else '' }}</td>
       <td class="row-actions">
-        {% if e.kind == 'file' %}<a href="/ui/files/raw?path={{ e.path|urlencode }}">Download</a>{% endif %}
-        {% if listing.writable %}<a href="/ui/files/rename?path={{ e.path|urlencode }}">Rename</a>{% endif %}
+        {% if e.kind == 'file' %}<a href="{{ base }}/raw?path={{ e.path|urlencode }}">Download</a>{% endif %}
+        {% if listing.writable %}<a href="{{ base }}/rename?path={{ e.path|urlencode }}">Rename</a>{% endif %}
       </td>
     </tr>
   {% endfor %}
@@ -61,8 +67,8 @@
   <span class="hint">With the selected:</span>
   <button type="submit" class="small secondary">Download (zip)</button>
   {% if listing.writable %}
-  <button type="submit" class="small secondary" formaction="/ui/files/move">Move…</button>
-  <button type="submit" class="small secondary" formaction="/ui/files/delete">Delete…</button>
+  <button type="submit" class="small secondary" formaction="{{ base }}/move">Move…</button>
+  <button type="submit" class="small secondary" formaction="{{ base }}/delete">Delete…</button>
   {% endif %}
 </div>
 </form>

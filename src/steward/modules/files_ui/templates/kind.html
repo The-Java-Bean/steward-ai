@@ -3,9 +3,9 @@
 {% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
 {% block content %}
 {% include "files_ui/_nav.html" %}
-<h1>{{ kind_title }}</h1>
+<h1>{{ kind_title }}{% if scope == 'locked' %} <span class="hint">in the Locked Folder</span>{% endif %}</h1>
 {% if libraries|length > 1 %}
-<form method="get" action="/ui/files" class="inline-row">
+<form method="get" action="{{ base }}" class="inline-row">
   <input type="hidden" name="kind" value="{{ kind }}">
   <label>Library
     <select name="library">
@@ -16,24 +16,10 @@
   <button type="submit" class="small">Show</button>
 </form>
 {% endif %}
-<p class="hint">{{ found.total }}{% if found.capped %}+{% endif %} files, newest first. Only files steward-ai has already scanned are listed; locked and hidden folders and the trash never are.</p>
-{% if found.entries %}
-<table class="files">
-  <thead><tr><th>Name</th><th>Folder</th><th class="num">Size</th><th>Modified</th></tr></thead>
-  <tbody>
-  {% for e in found.entries %}{% set folder = e.path.rsplit('/', 1)[0] if '/' in e.path else e.path.split(':')[0] ~ ':' %}
-    <tr>
-      <td><a href="/ui/files/view?path={{ e.path|urlencode }}">{{ e.name }}</a></td>
-      <td><a href="/ui/files?path={{ folder|urlencode }}"><code>{{ folder }}</code></a></td>
-      <td class="num">{{ e.size|filesizeformat }}</td>
-      <td>{{ e.modified.strftime('%Y-%m-%d') if e.modified else '' }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<p class="hint">{{ found.total }}{% if found.capped %}+{% endif %} files, newest first. Only files steward-ai has already scanned are listed; {% if scope == 'locked' %}only locked folders are included{% else %}locked and hidden folders and the trash never are{% endif %}.</p>
+{% include "files_ui/_found.html" %}
 <p>
-  {% if page > 1 %}<a href="/ui/files?kind={{ kind }}&amp;library={{ library|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
-  {% if found.total > page * per_page %}<a href="/ui/files?kind={{ kind }}&amp;library={{ library|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
+  {% if page > 1 %}<a href="{{ base }}?kind={{ kind }}&amp;library={{ library|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if found.total > page * per_page %}<a href="{{ base }}?kind={{ kind }}&amp;library={{ library|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
 </p>
-{% endif %}
 {% endblock %}

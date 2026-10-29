@@ -12,6 +12,7 @@ reaches only locked folders. Nothing here writes.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import errno
 import os
 import stat
@@ -23,7 +24,7 @@ from typing import Any
 from sqlalchemy import select
 
 from steward.core.db import Databases
-from steward.core.db.schema import blobs, files
+from steward.core.db.schema import blobs, files, folders
 from steward.core.discovery.hashing import HEAD, detect_mime, kind_of
 from steward.core.executor.guarded import (
     TEMP_PREFIX,
@@ -33,22 +34,25 @@ from steward.core.executor.guarded import (
     split_path,
 )
 from steward.core.folders import FolderRef, PathError
-from steward.core.folders.policy import Policy
+from steward.core.folders.policy import FolderMapping, Policy
 from steward.core.search import SearchError, SearchFilters, Visibility, search_files
 from steward.sdk import ActionRefused
 from steward.sdk.web import (
     Crumb,
     Entry,
+    FilePage,
     FolderListing,
-    KindPage,
     LibraryInfo,
+    LockedFolder,
     NotFound,
     Scope,
+    UnlockPreview,
 )
 
 READ_CHUNK = 256 * 1024
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 _IN_BATCH = 500
+UNLOCK_SAMPLE = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +138,24 @@ class Browser:
         if relpath.startswith(TEMP_PREFIX) or f"/{TEMP_PREFIX}" in relpath:
             return False
         if scope == "locked":
-            return self.visibility.is_locked(library_id, relpath)
+            return self.visibility.in_locked_view(library_id, relpath)
         return not self.visibility.is_hidden(library_id, relpath)
+
+    def locked_folders(self) -> list[LockedFolder]:
+        found: list[tuple[int, str, LockedFolder]] = []
+        for ref in self.visibility.locked_roots():
+            library = self.policy.libraries[ref.library_id]
+            settings = self.policy.settings_for(ref)
+            name = ref.relpath.rsplit("/", 1)[-1] if ref.relpath else library.name
+            folder = LockedFolder(
+                path=str(ref),
+                name=name,
+                library_name=library.name,
+                permanent=settings.permanent,
+                type_name=settings.type.name,
+            )
+            found.append((library.position, ref.relpath, folder))
+        return [f for _, _, f in sorted(found, key=lambda t: (t[0], t[1]))]
 
     # --- listing -------------------------------------------------------------------------
 
@@ -181,6 +201,11 @@ class Browser:
             locked=settings.locked,
             permanent=settings.permanent,
             truncated=truncated,
+            lock_from=(
+                f"{where.library_id}:{settings.locked_by}"
+                if settings.locked and settings.locked_by is not None
+                else None
+            ),
         )
 
     def entry(self, path: str, *, scope: Scope) -> Entry:
@@ -196,18 +221,40 @@ class Browser:
             scope,
         )
 
-    def by_kind(self, kind: str, *, library: str | None, limit: int, offset: int) -> KindPage:
+    def by_kind(
+        self, kind: str, *, library: str | None, scope: Scope, limit: int, offset: int
+    ) -> FilePage:
         try:
-            results = search_files(
-                self.dbs,
-                self.policy,
-                "",
-                filters=SearchFilters(kind=kind, library=library),
-                limit=limit,
-                offset=offset,
+            return self.search(
+                "", kind=kind, library=library, scope=scope, limit=limit, offset=offset
             )
         except SearchError:
-            return KindPage((), 0, False)
+            return FilePage((), 0, False)
+
+    def search(
+        self,
+        query: str,
+        *,
+        scope: Scope,
+        folder: str | None = None,
+        kind: str | None = None,
+        library: str | None = None,
+        limit: int,
+        offset: int,
+    ) -> FilePage:
+        """Raises `SearchError` (a `ValueError`) for a query that can't be searched."""
+        if folder is not None:
+            where = self.locate(folder, scope)
+            folder = where.path
+        results = search_files(
+            self.dbs,
+            self.policy,
+            query,
+            filters=SearchFilters(kind=kind, library=library, folder=folder),
+            scope=scope,
+            limit=limit,
+            offset=offset,
+        )
         entries = tuple(
             Entry(
                 name=h.name,
@@ -221,7 +268,87 @@ class Browser:
             )
             for h in results.hits
         )
-        return KindPage(entries, results.total, results.capped)
+        return FilePage(entries, results.total, results.capped)
+
+    def unlock_preview(self, path: str) -> UnlockPreview:
+        """What unlocking `path` (a folder in the locked scope) would make visible, worked
+        out on a copy of the policy without that folder's lock."""
+        where = self.locate(path, "locked")
+        ref = FolderRef(where.library_id, where.relpath)
+        settings = self.policy.settings_for(ref)
+        reason: str | None = None
+        if settings.locked_by != where.relpath:
+            parent = FolderRef(where.library_id, settings.locked_by or "")
+            reason = f"It is locked because {parent} is. Unlock that folder instead."
+        elif settings.permanent:
+            reason = (
+                "It is permanently locked. Only `steward folders unlock --permanent "
+                f"{ref}` on the server can unlock it."
+            )
+        mapping = self.policy.mappings.get(ref)
+        type_name = mapping.type_name if mapping is not None else None
+        type_locks = (
+            self.policy.types[type_name].locked
+            if type_name is not None
+            else where.relpath == "" and settings.type.locked
+        )
+        unlocked = dataclasses.replace(
+            self.policy,
+            mappings={
+                **self.policy.mappings,
+                ref: FolderMapping(
+                    mapping.folder_id if mapping is not None else 0, ref, type_name, False, False
+                ),
+            },
+        )
+        after = Visibility(unlocked)
+        prefix = f"{where.relpath}/" if where.relpath else ""
+        n_files = n_folders = size = 0
+        sample: list[str] = []
+        with self.dbs.state.read() as conn:
+            rows = [
+                ("dir", r.relpath, 0)
+                for r in conn.execute(
+                    select(folders.c.relpath).where(
+                        folders.c.library_id == where.library_id, folders.c.present.is_(True)
+                    )
+                )
+            ] + [
+                ("file", r.relpath, r.size or 0)
+                for r in conn.execute(
+                    select(files.c.relpath, files.c.size).where(
+                        files.c.library_id == where.library_id, files.c.present.is_(True)
+                    )
+                )
+            ]
+        for kind, relpath, nbytes in sorted(rows, key=lambda r: r[1]):
+            if relpath == where.relpath or not relpath.startswith(prefix):
+                continue
+            if after.is_hidden(where.library_id, relpath):
+                continue
+            if kind == "dir":
+                n_folders += 1
+            else:
+                n_files += 1
+                size += nbytes
+            if len(sample) < UNLOCK_SAMPLE:
+                sample.append(f"{where.library_id}:{relpath}")
+        still = tuple(
+            str(r)
+            for r in after.locked_roots()
+            if r.library_id == where.library_id and (not prefix or r.relpath.startswith(prefix))
+        )
+        return UnlockPreview(
+            path=where.path,
+            allowed=reason is None,
+            reason=reason,
+            files=n_files,
+            folders=n_folders,
+            size=size,
+            sample=tuple(sample),
+            still_locked=still,
+            type_locks=bool(type_locks),
+        )
 
     # --- reading ---------------------------------------------------------------------------
 

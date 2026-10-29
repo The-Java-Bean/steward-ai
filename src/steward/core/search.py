@@ -11,7 +11,8 @@ What can be found depends on the scope, and is decided **in the SQL query**:
 - `normal`: never anything in a locked folder, a hidden folder (`visible: false`), a
   folder holding copies of other files (trash, edit backups, `trash`-type folders), or
   steward-ai's own `.steward` folder.
-- `locked`: only files in locked folders (the Locked Folder view, after a re-auth).
+- `locked`: only files in locked folders (the Locked Folder view, after a re-auth), and
+  never anything those other rules hide (a locked folder's trash stays out of it).
 """
 
 from __future__ import annotations
@@ -109,6 +110,12 @@ def tokens(query: str) -> list[str]:
 def hidden_folders(policy: Policy) -> tuple[list[FolderRef], list[FolderRef]]:
     """(folders hidden from normal search, locked folders). Restrictions carry down, so
     the outermost folder of each is enough."""
+    concealed, locked = _folder_sets(policy)
+    return _outermost(concealed | locked), _outermost(locked)
+
+
+def _folder_sets(policy: Policy) -> tuple[set[FolderRef], set[FolderRef]]:
+    """(folders hidden for reasons other than a lock, folders whose own lock applies)."""
     hidden: set[FolderRef] = set()
     locked: set[FolderRef] = set()
     candidates = {*policy.mappings, *policy.roles.values()}
@@ -129,14 +136,20 @@ def hidden_folders(policy: Policy) -> tuple[list[FolderRef], list[FolderRef]]:
     for role in COPY_HOLDING_ROLES:
         if role in policy.roles:
             hidden.add(policy.roles[role])
-    return _outermost(hidden | locked), _outermost(locked)
+    return hidden, locked
 
 
 class Visibility:
-    """Which paths normal views may show (one policy snapshot)."""
+    """Which paths normal views and the Locked Folder view may show (one policy
+    snapshot)."""
 
     def __init__(self, policy: Policy) -> None:
-        self.hidden, self.locked = hidden_folders(policy)
+        concealed, locked = _folder_sets(policy)
+        self.hidden = _outermost(concealed | locked)
+        self.locked = _outermost(locked)
+        self.concealed = _outermost(concealed)
+        """Hidden for reasons other than a lock (`visible: false`, trash, copies,
+        `.steward`): also out of the Locked Folder view."""
 
     def is_hidden(self, library_id: str, relpath: str) -> bool:
         """Inside a locked, hidden or copy-holding folder."""
@@ -144,6 +157,16 @@ class Visibility:
 
     def is_locked(self, library_id: str, relpath: str) -> bool:
         return any(_inside(ref, library_id, relpath) for ref in self.locked)
+
+    def in_locked_view(self, library_id: str, relpath: str) -> bool:
+        """Inside a locked folder and not hidden for any other reason."""
+        return self.is_locked(library_id, relpath) and not any(
+            _inside(ref, library_id, relpath) for ref in self.concealed
+        )
+
+    def locked_roots(self) -> list[FolderRef]:
+        """The outermost locked folders the Locked Folder view starts from."""
+        return [ref for ref in self.locked if self.in_locked_view(ref.library_id, ref.relpath)]
 
     def path_hidden(self, path: str) -> bool:
         library_id, _, relpath = path.partition(":")
@@ -219,18 +242,22 @@ def search_files(
         where.append("instr(steward_fold(f.relpath), ?) > 0")
         args.append(word)
 
-    hidden, locked = hidden_folders(policy)
+    visibility = Visibility(policy)
     if scope == "normal":
-        for ref in hidden:
+        for ref in visibility.hidden:
             clause, values = _under(ref)
             where.append(f"NOT {clause}")
             args.extend(values)
     else:
-        if not locked:
+        if not visibility.locked:
             return SearchResults([], 0, capped=False)
-        parts = [_under(ref) for ref in locked]
+        parts = [_under(ref) for ref in visibility.locked]
         where.append("(" + " OR ".join(c for c, _ in parts) + ")")
         for _, values in parts:
+            args.extend(values)
+        for ref in visibility.concealed:
+            clause, values = _under(ref)
+            where.append(f"NOT {clause}")
             args.extend(values)
 
     if filters.library:

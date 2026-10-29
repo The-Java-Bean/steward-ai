@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Delete{% endblock %}
 {% block content %}
-<p class="crumbs"><a href="/ui/files?path={{ folder|urlencode }}">← {{ folder }}</a></p>
+{% include "files_ui/_back.html" %}
 <h1>Delete {{ entries|length }} item{{ '' if entries|length == 1 else 's' }}?</h1>
 <ul>{% for e in entries %}<li>{{ e.name }}{% if e.kind == 'dir' %}/ <span class="hint">(and everything inside)</span>{% endif %}</li>{% endfor %}</ul>
-<p>They go to the trash, and you can undo this afterwards. steward-ai never empties the trash on its own.</p>
+<p>They go to the trash{% if scope == 'locked' %} (into its locked part, so they stay hidden){% endif %}, and you can undo this afterwards. steward-ai never empties the trash on its own.</p>
 {% if needs_password %}<p class="hint">Deleting needs your password; you'll be asked for it, then come back here.</p>{% endif %}
-<form method="post" action="/ui/files/delete">
+<form method="post" action="{{ base }}/delete">
   <input type="hidden" name="csrf_token" value="{{ form_token }}">
   {% for e in entries %}<input type="hidden" name="path" value="{{ e.path }}">{% endfor %}
   <button type="submit">Move to trash</button>
-  <a href="/ui/files?path={{ folder|urlencode }}">Cancel</a>
+  <a href="{{ base }}?path={{ folder|urlencode }}">Cancel</a>
 </form>
 {% endblock %}

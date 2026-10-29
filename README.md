@@ -227,8 +227,9 @@ folder, or the files you tick, as one zip that starts right away however big it 
 Make folders, rename, move (pick the destination folder) and delete; each change shows
 an **Undo** button, and everything is in the Journal. Deleting moves things to the
 trash and asks for your password (subject to your re-auth setting). Locked and hidden
-folders and the trash don't appear here (the Locked Folder view comes next), symlinks
-are never shown or followed, and search results link straight to their files. The
+folders and the trash don't appear here (locked folders are in the Locked Folder,
+below), symlinks are never shown or followed, and search results link straight to
+their files. The
 file manager is a built-in module, `files_ui`; turn it off in `modules.yaml` with
 `files_ui: {enabled: false}`.
 
@@ -243,6 +244,30 @@ and undoing it moves the file to the trash. Uploading needs JavaScript. Unfinish
 uploads are removed after 24 hours (`uploads.stale_hours`). Behind a reverse proxy,
 allow request bodies of at least the piece size (nginx: `client_max_body_size 16m;`).
 Scripts can use the same protocol at `/api/v1/uploads` (see the API section).
+
+**Locked Folder** (`/ui/locked`, in the menu) works like a phone's locked photo album.
+Any folder can be locked: open it in Files and choose *Lock folder…*, or give it a
+locked folder type such as `private` (the private folder you chose at setup is
+locked this way). A locked folder and everything inside it disappears from Files,
+search, the journal's details and (later) chat and share links. Opening the Locked
+Folder asks for your password (subject to your re-auth setting); inside it is the
+normal file manager: upload, new folder, rename, move, delete (to a locked part of
+the trash), preview, download and zip, files by kind, and a search of the locked
+folders only. Nothing moves on disk and nothing is encrypted, so programs that read
+the disk directly can still see locked folders; keep them out of those programs'
+mounts.
+
+- **Permanent locks:** tick *Make the lock permanent* when locking (or choose *Make
+  the lock permanent…* inside the Locked Folder). A permanent lock can't be removed
+  from the web pages, the API or by the AI, only with
+  `steward folders unlock --permanent library:path` on the server. It asks for your
+  password and can't be undone.
+- **Unlocking** (inside the Locked Folder, *Unlock…*) first shows what would become
+  visible: how many files and folders, a sample, and folders inside that keep a lock
+  of their own. It asks for your password again. A folder locked because a parent is
+  locked can only be unlocked with that parent.
+- **Moving things out** of the Locked Folder: *Move…*, then *Out of the Locked
+  Folder…*, pick the folder, and tick the confirmation. It asks for your password.
 
 ### Changes, undo, jobs and health *(implemented)*
 steward-ai changes files only through its executor: never overwriting, never following
@@ -315,9 +340,10 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
-- **Phase 2 (files, Locked Folder, shares) in progress: chunks 1–2 of 5 done** (1:
-  module web SDK + `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018).
-  Next: chunk 3 Locked Folder; then 4 `shares`, 5 acceptance + test environment.
+- **Phase 2 (files, Locked Folder, shares) in progress: chunks 1–3 of 5 done** (1:
+  module web SDK + `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018;
+  3: the Locked Folder `/ui/locked`, ADR 0019). Next: chunk 4 `shares`; then 5
+  acceptance + test environment.
 - **Phase 0 done. Phase 1 (core): all 6 chunks done** (1: config, databases and migrations, job queue, events, scheduler,
   worker; 2: libraries, folder types, mappings, locks, roles, folder identity; 3:
   discovery: scanner, watcher, hashing, file identity; 3b: stage SDK, graph, planner,
@@ -326,7 +352,7 @@ steps, log). Read them first if present. A maintainer-only design document
   classification + model gateway (ADR 0015), executor/journal/undo + safety harness
   (ADR 0014), keyword search, `/api/v1`, `/ui/search|journal|jobs|health`,
   `/ui/settings/folders`, `steward backup|export` + pre-migration backups (ADR 0016)).
-- Not yet: the Locked Folder view (chunk 3), shares (chunk 4), a trash view in the file manager, `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
+- Not yet: shares (chunk 4), moving files into the Locked Folder from Files, a trash view in the file manager, `steward setup --from`, `SetupStep` for modules, the model-endpoint setup
   step, remote model endpoints (`remote_llm` module), proposals/approval, htmx (no JS
   so far), libraries and roles editable in the UI (CLI only).
 
@@ -369,13 +395,13 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/auth/clientip.py` | `client_ip(peer, x_forwarded_for, trusted=)`, `is_trusted_proxy(peer, trusted=)` |
 | `src/steward/core/setup/` | `token.py` `SetupToken` (memory-only random token, `check`); `suggest.py` `suggest(path)` → `Suggestion(type_name, reason)` (name with number prefix stripped → marker files `.git`/`.obsidian`/… → file kinds of ≤2000 entries, depth 3, no symlinks), `suggest_by_name`; `wizard.py` steps `STEPS` (`owner`, `libraries`, `types`, `private`, `roles`, `done`), `progress(conn, has_owner=)` → `Progress(step, finished, private_folder, private_skipped)`, `advance`, `library_candidates(config, policy)`, `suggest_library_id`, `add_library` (absolute, existing dir, unique id, no overlapping roots; returns warnings), `import_config_files`, `top_level_folders(policy, lib)` → `TopFolder`s, `apply_types` (skips folders that already have a type), `choose_private(ref, create=, permanent=)`, `parse_new_folder`, `skip_private`, `apply_roles({role: ref or None})`, `SETUP_ROLES`, `SetupError` |
 | `src/steward/core/executor/dirs.py` | `create_folder(root, relpath, mode=)`, `WRITE_LOCK` (process-wide single writer, used by `Executor`), `ExecutorError` |
-| `src/steward/sdk/actions.py` | Action SDK: `LibraryPath`/`PathField`, `NodeKind`, `AiMode`, `ActionRefused`, `PathState` (`satisfied_by`, `as_dict`/`from_dict`), `Plan(action, params, summary, preconditions, reads, writes, data)`, `Applied(result, post, moves, changed)`, `Rendered`, `PathPolicy`, protocols `ReadOnlyFS` (`state`, `settings`, `file_id`, `trash_folder`, `backup_folder`, `free_name`, `now`), `GuardedFS` (`mkdir`, `rmdir`, `move`, `create`, `copy`, `replace`, `read`, `set_lock`, `set_folder_type`), `ActionType` (`name`, `params`, `ai_mode`, `sensitive`, `plan`, `render`, `apply`, `inverse`, `examples`), `EXAMPLE_TREE`. `Registry.action(t)` (core may use `file.*`/`folder.*`), `Registry.exporter(fn)`; `Registrations.actions()`, `.exporters()` |
+| `src/steward/sdk/actions.py` | Action SDK: `LibraryPath`/`PathField`, `NodeKind`, `AiMode`, `ActionRefused`, `PathState` (`satisfied_by`, `as_dict`/`from_dict`), `Plan(action, params, summary, preconditions, reads, writes, data)`, `Applied(result, post, moves, changed)`, `Rendered`, `PathPolicy` (`type`, `writable`, `locked`, `sensitivity`, `lock_from`, `permanent`), `Plan.sensitive`, protocols `ReadOnlyFS` (`state`, `settings`, `file_id`, `trash_folder`, `backup_folder`, `free_name`, `now`), `GuardedFS` (`mkdir`, `rmdir`, `move`, `create`, `copy`, `replace`, `read`, `set_lock(path, locked, permanent=)`, `set_folder_type`), `ActionType` (`name`, `params`, `ai_mode`, `sensitive`, `plan`, `render`, `apply`, `inverse`, `examples`), `EXAMPLE_TREE`. `Registry.action(t)` (core may use `file.*`/`folder.*`), `Registry.exporter(fn)`; `Registrations.actions()`, `.exporters()` |
 | `src/steward/core/executor/guarded.py` | `ReadOnlyView` (policy + state_db + clock; `target(path, new=)`, `trash_folder` rules), `Guarded` (the `GuardedFS`; `allowed_writes` compared in NFC; DB ops deferred to the executor's transaction), `open_dir` (`O_NOFOLLOW` per component), `_rename_noreplace` (`renameat2`), `_link_new` (temp + fsync + link), `check_segments`, `content_hash`, `within`, `TEMP_PREFIX` (`.steward-tmp-`, also ignored by discovery), `LOCKED_TRASH` |
-| `src/steward/core/executor/actions.py` | Core action types `file.mkdir` (parents, private → 0700), `file.mkdirs`, `file.rmdir`, `file.move` (parents, `remove_empty` for undo), `file.rename`, `file.delete` (sensitive; trash `<YYYY-MM-DD>/<relpath>`, locked sources → `trash/locked`), `file.create`, `file.edit` (expected hash, backup to `edit_backups/YYYY/MM/<file_id>/`), `folder.lock`, `folder.unlock` (sensitive); `BUILTIN_ACTIONS`, `register_actions`, `MAX_TEXT_BYTES` |
-| `src/steward/core/executor/executor.py` | `Executor(dbs, actions, clock=, max_attempts=)`: `preview`, `run(name, params, actor=, confirmed=, proposal_id=)`, `undo(entry_id, actor=, confirmed=)`, `get`, `entries(limit=, before=)`; `JournalEntry` (`undoable`, `paths`), `Preview`, `ActionFailed`, `SensitiveActionError`. One transaction per action: DB ops, file/folder identities follow moves, journal row, `action.applied` event, `core.scan` jobs (priority 20) |
+| `src/steward/core/executor/actions.py` | Core action types `file.mkdir` (parents, private → 0700), `file.mkdirs`, `file.rmdir`, `file.move` (parents, `remove_empty` for undo), `file.rename`, `file.delete` (sensitive; trash `<YYYY-MM-DD>/<relpath>`, locked sources → `trash/locked`), `file.create`, `file.edit` (expected hash, backup to `edit_backups/YYYY/MM/<file_id>/`), `folder.lock` (`LockParams` path + `permanent`; permanent → `Plan.sensitive`, no inverse; can make an own lock permanent), `folder.unlock` (`UnlockParams`; sensitive; refuses permanent and inherited locks at plan time); `BUILTIN_ACTIONS`, `register_actions`, `MAX_TEXT_BYTES` |
+| `src/steward/core/executor/executor.py` | `Executor(dbs, actions, clock=, max_attempts=)` (sensitive = type flag, `plan.sensitive` or a locked path): `preview`, `run(name, params, actor=, confirmed=, proposal_id=)`, `undo(entry_id, actor=, confirmed=)`, `get`, `entries(limit=, before=)`; `JournalEntry` (`undoable`, `paths`), `Preview`, `ActionFailed`, `SensitiveActionError`. One transaction per action: DB ops, file/folder identities follow moves, journal row, `action.applied` event, `core.scan` jobs (priority 20) |
 | `src/steward/core/privacy/` | `rules.py` `matches(relpath, pattern)`, `PrivacyRules` (`from_config`, `is_secret`, `level_for`); `classify.py` `Classifier` (`load(conn, rules)`, `for_path`, `for_files`) → `FileClass(sensitivity, locked, visible, shareable, known)`, `UNKNOWN`; `overrides.py` `set_override(conn, file_id, level|None, actor=)` (event `file.sensitivity_changed`) |
 | `src/steward/core/llm/` | `transport.py` `ChatRequest`, `EmbedRequest`, `ModelResponse`, `ModelTransport`, `OpenAICompatibleTransport` (stdlib urllib), `ModelUnavailable`; `gateway.py` `Gateway(config, state_db, privacy, transport)` `.route(role)`, `.call(role, request, provenance=, purpose=, taint=, allow_local_fallback=)` → `GatewayResult`; `PrivacyViolation`, `RoleNotConfigured`, `check_llm_config` (refuses remote endpoints for now). Only this package may use `urllib`/`openai` |
-| `src/steward/core/search.py` | `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)`; raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `Visibility(policy)` (`is_hidden`, `is_locked`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
+| `src/steward/core/search.py` | `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)` (locked scope = locked folders minus `concealed`); raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `_folder_sets`, `Visibility(policy)` (`hidden`, `locked`, `concealed` = hidden for non-lock reasons; `is_hidden`, `is_locked`, `in_locked_view`, `locked_roots()`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
 | `src/steward/core/backup.py` | `backup(runtime, reason=, keep=)` → `BackupInfo` (online-backup copies of both DBs, `state.json`, `manifest.json`, `.partial-` then rename, 0600, prune), `export_state(runtime, strict=)` (`CORE_EXPORT_TABLES` minus secret columns + module exporters), `list_backups`, `latest_backup`, `prune`, `before_migrate(runtime)` (pending revision on existing DBs and no backup within `max_age_before_migrate_hours` → back up or raise `BackupError`) |
 | `src/steward/api/security.py` | The guard (app-wide dependency): `access(level)` decorator for core routes (`public`, `setup`, `session` default, `principal`), `level_of`, `ApiState(auth, api, trusted_proxies, setup_token)` (`has_owner` cached once true), `guard` (sets `request.state.principal/session_secret/csrf/presession/ip/https`), refusals `Refused(status, message)`, `NeedLogin`, `SetupRequired`, `SetupClosed`; `safe_next`, `is_https`; cookie names `steward_session`, `steward_setup`, `steward_presession` |
 | `src/steward/api/app.py` | `create_app(runtime, setup_token=)`: core routers, module pages (`UiPageError` for reserved/duplicate paths, non-`APIRoute` routes or two templates/static dirs per module; module static at `/static/m/<module>` mounted before `/static`; sets `app.state.module_pages`, `templates`, `steward_web`, `link_builders`), `/static`, `NotFound` → 404, `_check_routes` (fail closed), exception handlers (login redirect / 401 JSON, `/setup` redirect / 503, re-auth redirect, 429 + `Retry-After`, HTML or JSON errors), security headers middleware; `CORE_UI_PATHS` |
@@ -392,14 +418,15 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/folders/store.py` | DB ops (emit events): `load_policy`, `upsert_library`, `ensure_folder`, `folder_id`, `move_folder`, `define_type`/`rename_type`/`delete_type`, `set_type`, `lock`/`unlock`/`clear_lock_override`, `set_role`/`clear_role`, `ensure_default_roles`; `FolderError`, `PermanentLockError` |
 | `src/steward/core/folders/seed.py` | `import_seed(conn, libraries=, folders=)` → `ImportReport`; additive, parents-first types |
 | `src/steward/core/loader/loader.py` | `discover()` (entry points, no imports), `resolve_enabled(choices)` (defaults: built-in features on, all else off), `load_modules(enabled, entry_points=None, core=None)` → `LoadedModules(modules, registrations)`; error classes, all subclasses of `ModuleLoadError` |
-| `src/steward/sdk/web.py` | Web services for module pages (ADR 0017): `WebDep` (FastAPI dependency → `get_web` → `app.state.steward_web`), protocols `Web` (`viewer`, `module`, `files`, `actions`, `csrf_token`, `static_url`, `render`, `redirect`, `recently_authenticated`, `require_reauth`), `Files` (`libraries`, `listing`, `entry`, `by_kind`, `read_text`, `file_response`, `zip_response`; `scope` `normal`/`locked`), `Actions` (`preview`, `run`, `run_all`, `undo`); dataclasses `Viewer`, `LibraryInfo`, `Crumb`, `Entry`, `FolderListing`, `KindPage`, `ActionPreview`, `ActionDone`, `StepOutcome`; `NotFound`; `LinkBuilder`, `Scope`, `EntryKind`. `ui_page(templates=, static=)` (`UiPage.templates/static`), `Registry.link_builder`, `Registrations.link_builders()`, `Registrations.module_of(point, name)` |
-| `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy)` (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `listing`, `entry`, `by_kind` (search with empty query), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
-| `src/steward/api/web.py` | The core's `Web` implementation: `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
-| `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.1.0 (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (page `files_ui.page` at `/ui/files` with `templates/` + `static/files.css`, link builder `files_ui.links`); `routes.py`: `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries or redirect to the only one; `did`/`n`/`undo` query → notice + Undo button), `GET /view`, `GET /raw` (`inline=1`), `GET /zip` (`path` repeated), `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker via `to=`), `GET|POST /delete` (confirm page, then `run_all`), `POST /undo` (`entries` comma list, `back`); templates `browse`, `kind`, `libraries`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo` |
+| `src/steward/sdk/web.py` | Web services for module pages (ADR 0017): `WebDep` (FastAPI dependency → `get_web` → `app.state.steward_web`), protocols `Web` (`viewer`, `module`, `files`, `actions`, `csrf_token`, `static_url`, `render`, `redirect`, `recently_authenticated`, `require_reauth`), `Files` (`libraries`, `listing`, `entry`, `by_kind(scope=)`, `search`, `locked_folders`, `unlock_preview`, `read_text`, `file_response`, `zip_response`; `scope` `normal`/`locked`), `Actions` (`preview`, `run`, `run_all`, `undo`); dataclasses `Viewer`, `LibraryInfo`, `Crumb`, `Entry`, `FolderListing` (+`lock_from`), `FilePage` (alias `KindPage`), `LockedFolder`, `UnlockPreview`, `ActionPreview`, `ActionDone`, `StepOutcome`; `NotFound`; `LinkBuilder`, `Scope`, `EntryKind`. `ui_page(templates=, static=)` (`UiPage.templates/static`), `Registry.link_builder`, `Registrations.link_builders()`, `Registrations.module_of(point, name)` |
+| `src/steward/core/files/` | Read side for people (no writes): `browse.Browser(dbs, policy)` (`libraries`, `locate(path, scope)` → `Located` or `NotFound`, `visible(lib, rel, scope)` = the scope rule, `locked_folders`, `listing`, `entry`, `by_kind` (search with empty query), `search`, `unlock_preview` (policy copy with the lock removed via `dataclasses.replace`, counts from `files`/`folders`), `open` → `OpenFile` (fd, entry, size, `pread`), `zip_members` → `ZipMember`s via `os.fwalk` without following symlinks; disk + `files`/`blobs` merge in `_known`); `zipstream.stream_zip(members)` (unseekable `ZipFile`, ZIP64, stored); `open_member` |
+| `src/steward/api/web.py` | The core's `Web` implementation: `make_web(request)` (finds the module page by longest mount-path prefix in `app.state.module_pages`), `WebHandle`, `WebFiles` (`check_scope`: locked scope → `is_recent` else `require_recent_auth`; also for `locked_folders`/`unlock_preview`), `WebActions` (`SensitiveActionError` → `require_recent_auth` → retry `confirmed=True`; `run_all` previews all, asks once), `file_response` (single `Range`, 206/416, inline only for `INLINE_TYPES`, `RAW_CSP` with `sandbox`, `PDF_CSP` + `X-Frame-Options: SAMEORIGIN` for PDFs), `disposition`, `first_link` (core pages → first `link_builder`) |
+| `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.2.0 (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (pages `files_ui.page` at `/ui/files` and `files_ui.locked` at `/ui/locked` "Locked Folder", same `templates/` + `static/`, link builder `files_ui.links`); `routes.py` `make_router(scope)` → `router` (normal) and `locked_router` (router dependency `_gate`: `recently_authenticated()` else `require_reauth()`): `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries / the only library (normal) or `locked.html` list of `locked_folders()` (locked); `did`/`n`/`undo` → notice + Undo), `GET /view`, `GET /raw` (`inline=1`), `GET /zip`, `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker `to=`, `to_scope=` honoured only in the locked router; moving out needs `confirm_out` else 409), `GET|POST /delete`, `GET|POST /lock` (normal: lock, `permanent` optional; locked: only make permanent), `POST /undo`; locked only: `GET /search?q=`, `GET|POST /unlock` (preview page, then `folder.unlock`, redirect to `/ui/files`). Templates get `base`/`scope`: `browse`, `kind`, `libraries`, `locked`, `search`, `lock`, `unlock`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo`, `_back`, `_found` |
 | `src/steward/core/executor/uploads.py` | `Uploads(dbs, executor, UploadsConfig, clock=)` (`Runtime.uploads`): `start(folder, name, size, actor=, confirmed=)` (checks; creates `UPLOAD_PREFIX + id` exclusively; `SensitiveActionError` for locked folders unless `confirmed`), `get`, `list_open(actor=)`, `write(id, offset, data, actor=)` (per-upload `threading.Lock`; offset must equal `received`; truncates a longer temp file; `pwrite` + `fsync`), `finish(id, actor=, name=)` (runs `file.upload` with `confirmed or info.confirmed`), `cancel`, `expire()`; `UploadInfo` (`path`, `temp`, `as_dict`), errors `UploadNotFound`, `UploadConflict(suggestion)`, `OffsetMismatch(offset)` (all `ActionRefused`); `FREE_SPACE_MARGIN` 64 MiB |
 | `src/steward/api/routes/uploads.py` | `/api/v1/uploads` (default `session` level): `POST ""` (`StartBody` folder/name/size/scope; `Browser.locate` for the scope; locked scope → `is_recent` or `require_recent_auth`, then `confirmed=True`), `GET ""` (`?scope=`; filtered by `Browser.visible`), `GET /{id}`, `PUT /{id}` (async; 415 unless `application/offset+octet-stream`/`octet-stream`, 400 without `Upload-Offset`, 413 over `chunk_bytes`, `ClientDisconnect` → 400 with nothing written; write in the threadpool), `POST /{id}/finish` (`FinishBody` name), `DELETE /{id}` (204); `_refusal` maps errors to 409 (+`suggestion`/`offset`), 404, 403, 400, 500 |
 | `src/steward/modules/files_ui/static/upload.js` | Browser client: queue, one file at a time; resume via `localStorage` (`steward.uploads.v1`, key folder+name+size+lastModified) or the server's open list; backoff up to 30 s, 40 failures; keep-both/skip buttons on 409; Cancel; lists unfinished uploads of the folder at load; reloads when all succeeded. Shown only on writable folders (`#uploads` section, `data-folder`, `data-scope`, `data-csrf`) |
 | `tests/integration/test_uploads.py` | Uploads: pieces + finish + undo, offset mismatch and crash truncation, collisions ("keep both"), bad destinations, symlinked folders, locked folders (confirmed start, 0600), free space and size limits, cancel/expire, ownership, discovery ignores temps, `file.upload` refusals; HTTP flow with a dropped piece, refusals (413/415/400/409/404), scopes, CSRF/tokens, the page's upload panel, re-auth window 0 |
+| `tests/locked_support.py`, `tests/integration/test_locked_folder.py`, `tests/privacy/test_locked_routes.py` | `LockedEnv` (library with `private` type folder, locked `vault` with its own locked `vault/own`, `SECRET_NAME`/`SECRET_CONTENT` markers, `forget_reauth()`); the Locked Folder end to end (gate on every route, window 0, root list without trash, full file manager, move out with confirmation, search/kinds, lock + undo, permanent locks from UI/API/executor/settings refused, host unlock, unlock preview, type-locked folders); the route walk: every route × locked paths in every parameter, non-recent session and API token leak nothing, recent session only via `SHOWS_LOCKED` |
 | `tests/integration/test_files_ui.py` | The file manager end to end (listing rules, symlinks, 404 for locked/hidden/bad paths, inline vs attachment + CSP, ranges, zips, mkdir/rename/move/delete + undo, re-auth on delete with window 0, search links, module off) |
 | `src/steward/cli.py` | Typer app, global `--config-dir`: `version`, `modules`, `api` (`steward.api.serve`), `config check`, `db upgrade`, `db status`, `jobs list`, `jobs retry <id>`, `worker`, `folders import|list|show|map|unmap|lock|unlock|role|move`, `types list|show|rename|delete`, `scan [lib[:path]…] [--allow-empty]`, `files list [lib:path] [--missing]`, `stages list`, `stages plan`, `user list|reset-password [NAME]|unlock [--username|--ip]|sessions [--all]|logout [ID]|settings [--reauth/--no-reauth] [--reauth-minutes N]`, `tokens list [--all]|create LABEL [--scope …] [--expires-days N]|revoke ID`, `files sensitivity LIB:PATH local-only|excluded|clear`, `search QUERY [--library --folder --kind --limit]`, `journal list [--limit]|undo ID` (host is trusted: `confirmed=True`), `backup [--keep N]`, `export [--output F]`; `db upgrade` backs up first via `before_migrate` (actor `cli`); `worker` also queues a startup `core.reconcile`, a full stage pass if the graph signature changed, and runs the `Watcher` thread |
 | `config/*.example.yaml` | Annotated examples of `steward.yaml` (incl. `backup:`), `modules.yaml`, `pipeline.yaml`, `libraries.yaml`, `folders.yaml`, `privacy.yaml`, `llm.yaml` (tests validate and import them) |
@@ -417,7 +444,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `tests/executor_support.py`, `tests/executor/test_action_safety.py`, `tests/integration/test_executor.py` | `ExecEnv` (runtime + library + scan/map/lock helpers), `build_tree`, `snapshot`; the safety harness parametrized over every registered action's `examples` (`NO_EXAMPLES = {"folder.unlock"}`); executor flows (trash, locked trash, edits, journal, events, identities) |
 | `tests/privacy/test_privacy_suite.py`, `tests/unit/test_privacy_rules.py` | Gateway with a fake transport: every plan §9.6 case, log scan for content, trust/remote config errors, only `core.llm` uses `urllib`/`openai`; rule matching |
 | `tests/integration/test_search.py`, `test_backup.py`, `test_api_v1.py` | Search on two layouts (hidden/locked/trash excluded, filters, Unicode); backups, prune, export contents, pre-migrate backup; `/api/v1` and the new UI pages (tokens never see locked folders or change anything, session actions + undo, journal redaction, OpenAPI, folder unlock re-auth) |
-| `docs/adr/` | ADRs 0001–0018, index, template |
+| `docs/adr/` | ADRs 0001–0019, index, template |
 | `docs/modules.md` | Module authoring guide |
 | `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md` | Keep a Changelog; generated by `make notices` |
 
@@ -645,6 +672,27 @@ steps, log). Read them first if present. A maintainer-only design document
 - Manual browser runs: `~/steward-sandbox`-style instance + Playwright (see the
   handoff); not part of `make check`.
 
+### Locked Folder (implemented; ADR 0019)
+- `/ui/locked` = `files_ui.locked`, built from the same `make_router` as `/ui/files`;
+  every route behind `_gate`. Templates must link through `{{ base }}` (never a
+  hard-coded `/ui/files`), and `_undo`/`errors` use `undo_base or base`.
+- Locked scope rule: `Visibility.in_locked_view` (locked and not `concealed`), so the
+  locked trash (`trash/locked`) and other hidden folders inside never show there or in
+  the locked search; root = `Visibility.locked_roots()`.
+- `folder.lock` permanent: `Plan.sensitive=True`, `Applied.result["permanent"]`, inverse
+  `None`; plan refuses "already locked" unless making an own non-permanent lock
+  permanent. `folder.unlock` plan refuses inherited (`lock_from != path`) and permanent
+  locks; `folder_store.unlock(allow_permanent=True)` (CLI) is the only way out.
+- Moving out: locked router only, `to_scope=normal` + `confirm_out`; redirects to
+  `/ui/files?...did=move_out`. Normal router ignores `to_scope` (always normal).
+- Unlock redirects to `/ui/files?path=<folder>&did=unlock&undo=<id>` (undo = lock again).
+- Jinja `urlencode` encodes `:` as `%3A`: test hrefs as `path=lib%3A...`.
+- The privacy walk builds params with every name routes read (`path`, `folder`, `to`,
+  `q`, `back`, `entries`, `scope`, `to_scope`, `locked`, …); never put a secret marker
+  in a request parameter (re-auth redirects echo the URL in `next=`). New routes are
+  walked automatically; add to `SHOWS_LOCKED` only for a route meant to show locked
+  content after a recent check.
+
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
   version tables `alembic_version_<owner>`.
@@ -757,7 +805,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 0. ~~Foundation: repo skeleton, SDK `Module`/`Registry`, module loader, ADRs, license.~~ Done.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
-2. File manager, Locked Folder, built-in shares *(in progress: chunks 1–2 of 5 done — module web SDK + `files_ui`, resumable uploads)*.
+2. File manager, Locked Folder, built-in shares *(in progress: chunks 1–3 of 5 done — module web SDK + `files_ui`, resumable uploads, Locked Folder)*.
 3. Indexing and tagging (documents, search, fields, tags, photos).
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).

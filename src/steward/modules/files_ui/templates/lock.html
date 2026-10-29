@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Lock {{ listing.name }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ base }}?path={{ listing.path|urlencode }}">← {{ listing.path }}</a></p>
+{% if scope == 'locked' %}
+<h1>Make the lock on {{ listing.name }} permanent?</h1>
+<p>A permanent lock can't be removed here, through the API or by the AI. Only <code>steward folders unlock --permanent {{ listing.path }}</code>, run on the server, can remove it. This can't be undone from the web page.</p>
+<form method="post" action="{{ base }}/lock">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="path" value="{{ listing.path }}">
+  <input type="hidden" name="permanent" value="true">
+  <button type="submit">Make it permanent</button>
+  <a href="{{ base }}?path={{ listing.path|urlencode }}">Cancel</a>
+</form>
+{% else %}
+<h1>Lock {{ listing.name }}?</h1>
+<p>The folder and everything in it disappears from Files, search, chat and share links, and shows only in the <a href="/ui/locked">Locked Folder</a>, which asks for your password. Nothing moves on disk, and nothing is encrypted; programs that read the disk directly can still see it.</p>
+<form method="post" action="{{ base }}/lock">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="path" value="{{ listing.path }}">
+  <label class="checkbox"><input type="checkbox" name="permanent" value="true"> Make the lock permanent: only <code>steward folders unlock --permanent</code> on the server can remove it (asks for your password)</label>
+  <button type="submit">Lock folder</button>
+  <a href="{{ base }}?path={{ listing.path|urlencode }}">Cancel</a>
+</form>
+{% endif %}
+{% endblock %}

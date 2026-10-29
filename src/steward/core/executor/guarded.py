@@ -148,8 +148,18 @@ class ReadOnlyView:
             settings = self.policy.settings_for(FolderRef(target.library.library_id, relpath))
         except PathError as exc:
             raise ActionRefused(str(exc)) from None
+        lock_from = (
+            f"{target.library.library_id}:{settings.locked_by}"
+            if settings.locked and settings.locked_by is not None
+            else None
+        )
         return PathPolicy(
-            settings.type.name, settings.writable, settings.locked, settings.sensitivity
+            settings.type.name,
+            settings.writable,
+            settings.locked,
+            settings.sensitivity,
+            lock_from=lock_from,
+            permanent=settings.permanent,
         )
 
     def settings(self, path: str) -> PathPolicy:
@@ -393,14 +403,14 @@ class Guarded(ReadOnlyView):
 
     # --- folder settings (applied with the journal entry) ---------------------------
 
-    def set_lock(self, path: str, locked: bool) -> None:
+    def set_lock(self, path: str, locked: bool, *, permanent: bool = False) -> None:
         target = self.target(path)
         ref = FolderRef(target.library.library_id, target.relpath)
         actor = "executor"
 
         def op(conn: Connection) -> None:
             if locked:
-                folder_store.lock(conn, ref, actor=actor)
+                folder_store.lock(conn, ref, permanent=permanent, actor=actor)
             else:
                 try:
                     folder_store.unlock(conn, ref, actor=actor)

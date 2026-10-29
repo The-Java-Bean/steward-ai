@@ -194,7 +194,11 @@ that the executor runs, checks, journals and can undo
   undo round trips, drift, hostile paths, symlinks and collisions automatically.
 
 Sensitive actions, and any action touching a locked folder, need the owner's
-confirmation (a recent password check in the UI).
+confirmation (a recent password check in the UI). A `Plan` can also set
+`sensitive=True` when only some parameters make it sensitive (the core's `folder.lock`
+does this for permanent locks); a plan can add sensitivity, never remove it.
+`view.settings(path)` returns a `PathPolicy` (`type`, `writable`, `locked`,
+`sensitivity`, `lock_from`: the folder whose lock applies, `permanent`).
 
 ## UI pages
 
@@ -273,10 +277,13 @@ r.ui_page(
   `static_url` is `/static/m/<module>`. Static files are public: never put anything
   private there.
 - `web.files`: `libraries()`, `listing(path)`, `entry(path)`, `by_kind(kind)`,
-  `read_text(path, max_bytes=)`, `file_response(path, inline=)` (byte ranges, sandboxed),
+  `search(query, folder=, kind=)` (both return a `FilePage`), `read_text(path,
+  max_bytes=)`, `file_response(path, inline=)` (byte ranges, sandboxed),
   `zip_response(paths, name=)` (streamed). Every call takes `scope="normal"` (default:
   locked, hidden and trash folders don't exist) or `scope="locked"` (only inside locked
-  folders; asks for the password first).
+  folders, never their trash; asks for the password first). For the Locked Folder:
+  `locked_folders()` (`LockedFolder`s to start from) and `unlock_preview(path)` (an
+  `UnlockPreview`: what unlocking would make visible, or why it can't be unlocked).
 - `web.actions`: `preview`, `run`, `run_all` (one password check for a whole selection),
   `undo`. Sensitive actions send the browser to the password page by themselves.
 - `web.viewer`, `web.recently_authenticated()`, `web.require_reauth()`, `web.redirect(url)`

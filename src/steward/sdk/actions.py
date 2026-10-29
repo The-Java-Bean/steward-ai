@@ -116,9 +116,12 @@ class Plan:
     writable folder."""
     data: Mapping[str, Any] = field(default_factory=dict)
     """Values resolved at planning time that `apply` needs (JSON-compatible)."""
+    sensitive: bool = False
+    """Sensitive with these parameters even though the action type isn't (a permanent
+    lock, say). A plan can only add sensitivity, never remove it."""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "action": self.action,
             "params": dict(self.params),
             "summary": self.summary,
@@ -127,6 +130,9 @@ class Plan:
             "writes": list(self.writes),
             "data": dict(self.data),
         }
+        if self.sensitive:
+            out["sensitive"] = True
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Plan:
@@ -138,6 +144,7 @@ class Plan:
             reads=tuple(data.get("reads", [])),
             writes=tuple(data.get("writes", [])),
             data=dict(data.get("data", {})),
+            sensitive=bool(data.get("sensitive", False)),
         )
 
 
@@ -167,6 +174,10 @@ class PathPolicy:
     writable: bool
     locked: bool
     sensitivity: Sensitivity
+    lock_from: str | None = None
+    """`library:path` of the folder whose lock applies here (itself or a parent)."""
+    permanent: bool = False
+    """The lock can only be removed on the host (`steward folders unlock --permanent`)."""
 
 
 @runtime_checkable
@@ -233,9 +244,9 @@ class GuardedFS(ReadOnlyFS, Protocol):
 
     def read(self, path: str, *, max_bytes: int) -> bytes: ...
 
-    def set_lock(self, path: str, locked: bool) -> None:
-        """Lock or unlock a folder (folder settings, not the disk). Permanent locks are
-        refused."""
+    def set_lock(self, path: str, locked: bool, *, permanent: bool = False) -> None:
+        """Lock or unlock a folder (folder settings, not the disk). `permanent` makes the
+        lock removable only on the host; unlocking a permanent lock is refused."""
         ...
 
     def set_folder_type(self, path: str, type_name: str) -> None:

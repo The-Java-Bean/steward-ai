@@ -106,6 +106,8 @@ class FolderListing:
     permanent: bool
     truncated: bool = False
     """More entries than the listing's limit."""
+    lock_from: str | None = None
+    """`library:path` of the folder whose lock applies (this one or a parent)."""
 
     @property
     def folders(self) -> tuple[Entry, ...]:
@@ -117,12 +119,49 @@ class FolderListing:
 
 
 @dataclass(frozen=True, slots=True)
-class KindPage:
-    """Files of one kind across the libraries (newest first)."""
+class FilePage:
+    """A page of files found across the libraries (by kind or by a search)."""
 
     entries: tuple[Entry, ...]
     total: int
     capped: bool
+    """`total` stopped counting (there are more)."""
+
+
+KindPage = FilePage
+"""The name `by_kind` used first."""
+
+
+@dataclass(frozen=True, slots=True)
+class LockedFolder:
+    """A folder the Locked Folder view starts from (an outermost locked folder)."""
+
+    path: str
+    name: str
+    library_name: str
+    permanent: bool
+    type_name: str
+    """Its folder type; a locked type (such as `private`) locks it by itself."""
+
+
+@dataclass(frozen=True, slots=True)
+class UnlockPreview:
+    """What unlocking a folder would make visible in normal views."""
+
+    path: str
+    allowed: bool
+    reason: str | None
+    """Why unlocking isn't possible (permanent, or locked by a parent)."""
+    files: int
+    folders: int
+    size: int
+    """Bytes in `files`. Counts cover what steward-ai has scanned."""
+    sample: tuple[str, ...]
+    """Some of the paths that would become visible."""
+    still_locked: tuple[str, ...]
+    """Folders inside that keep their own lock."""
+    type_locks: bool
+    """The folder's type locks it; unlocking overrides the type for this folder."""
 
 
 class Files(Protocol):
@@ -139,9 +178,37 @@ class Files(Protocol):
         ...
 
     def by_kind(
-        self, kind: str, *, library: str | None = None, limit: int = 100, offset: int = 0
-    ) -> KindPage:
-        """Files of one kind in normal views."""
+        self,
+        kind: str,
+        *,
+        library: str | None = None,
+        scope: Scope = "normal",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FilePage:
+        """Files of one kind, newest first."""
+        ...
+
+    def search(
+        self,
+        query: str,
+        *,
+        scope: Scope = "normal",
+        folder: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> FilePage:
+        """Files whose path contains every word of `query`. Raises `ValueError` for a
+        query that can't be searched (too many or too long words)."""
+        ...
+
+    def locked_folders(self) -> list[LockedFolder]:
+        """The locked folders, by library and path (needs a recent password check)."""
+        ...
+
+    def unlock_preview(self, path: str) -> UnlockPreview:
+        """What unlocking the locked folder `path` would expose. Raises `NotFound`."""
         ...
 
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:

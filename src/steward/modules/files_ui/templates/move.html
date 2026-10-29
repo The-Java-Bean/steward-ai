@@ -4,22 +4,34 @@
 {% block content %}
 <h1>Move {{ entries|length }} item{{ '' if entries|length == 1 else 's' }}</h1>
 <ul class="selection">{% for e in entries %}<li>{{ e.name }}{% if e.kind == 'dir' %}/{% endif %}</li>{% endfor %}</ul>
-{% set keep %}{% for p in selected %}&amp;path={{ p|urlencode }}{% endfor %}{% endset %}
+{% set keep %}&amp;to_scope={{ to_scope }}{% for p in selected %}&amp;path={{ p|urlencode }}{% endfor %}{% endset %}
+{% set keep_paths %}{% for p in selected %}&amp;path={{ p|urlencode }}{% endfor %}{% endset %}
 <h2>To</h2>
-{% if libraries|length > 1 %}<p class="hint">Libraries: {% for lib in libraries %}<a href="/ui/files/move?to={{ lib.path|urlencode }}{{ keep }}">{{ lib.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
-<p class="crumbs">{% for c in listing.crumbs %}<a href="/ui/files/move?to={{ c.path|urlencode }}{{ keep }}">{{ c.name }}</a> / {% endfor %}<strong>{{ listing.name }}</strong></p>
+{% if scope == 'locked' %}
+<p class="files-tabs">
+  <a href="{{ base }}/move?to_scope=locked{{ keep_paths }}"{% if not moving_out %} aria-current="page"{% endif %}>Inside the Locked Folder</a>
+  <a href="{{ base }}/move?to_scope=normal{{ keep_paths }}"{% if moving_out %} aria-current="page"{% endif %}>Out of the Locked Folder…</a>
+</p>
+{% endif %}
+{% if libraries|length > 1 and to_scope == 'normal' %}<p class="hint">Libraries: {% for lib in libraries %}<a href="{{ base }}/move?to={{ lib.path|urlencode }}{{ keep }}">{{ lib.name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+<p class="crumbs">{% if to_scope == 'locked' %}<span>Locked Folder</span> / {% endif %}{% for c in listing.crumbs %}<a href="{{ base }}/move?to={{ c.path|urlencode }}{{ keep }}">{{ c.name }}</a> / {% endfor %}<strong>{{ listing.name }}</strong></p>
 <ul class="folders">
-  {% for e in listing.folders %}<li><a href="/ui/files/move?to={{ e.path|urlencode }}{{ keep }}">{{ e.name }}/</a></li>{% else %}<li class="hint">No folders inside.</li>{% endfor %}
+  {% for e in listing.folders %}<li><a href="{{ base }}/move?to={{ e.path|urlencode }}{{ keep }}">{{ e.name }}/</a></li>{% else %}<li class="hint">No folders inside.</li>{% endfor %}
 </ul>
 {% if moving_into_itself %}
 <p class="warning">A folder can't be moved into itself. Pick another folder.</p>
 {% elif not listing.writable %}
 <p class="warning">This folder is read-only.</p>
 {% else %}
-<form method="post" action="/ui/files/move">
+<form method="post" action="{{ base }}/move">
   <input type="hidden" name="csrf_token" value="{{ form_token }}">
   <input type="hidden" name="to" value="{{ listing.path }}">
+  <input type="hidden" name="to_scope" value="{{ to_scope }}">
   {% for p in selected %}<input type="hidden" name="path" value="{{ p }}">{% endfor %}
+  {% if moving_out %}
+  <p class="warning">These items will leave the Locked Folder: they'll show in Files, search and (later) chat. Moving them needs your password.</p>
+  <label class="checkbox"><input type="checkbox" name="confirm_out" value="true" required> Yes, move them out of the Locked Folder</label>
+  {% endif %}
   <button type="submit">Move here ({{ listing.name }})</button>
 </form>
 {% endif %}

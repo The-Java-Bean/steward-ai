@@ -108,6 +108,8 @@ def test_the_route_list_includes_module_pages(app: FastAPI) -> None:
     paths = {path for _, path, _ in _routes(app)}
     assert {"/ui/hello", "/ui/poster", "/ui/poster/act", "/ui/settings"} <= paths
     assert {"/ui/files", "/ui/files/raw", "/ui/files/move", "/ui/files/delete"} <= paths
+    assert {"/ui/locked", "/ui/locked/raw", "/ui/locked/unlock", "/ui/locked/search"} <= paths
+    assert "/ui/files/unlock" not in paths  # unlocking happens only in the Locked Folder
 
 
 def test_only_the_listed_routes_are_public(app: FastAPI) -> None:

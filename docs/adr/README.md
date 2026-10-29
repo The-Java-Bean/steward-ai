@@ -24,5 +24,6 @@ a later record supersedes an earlier one and both say so.
 | [0016](0016-backups.md) | Backups, exports and migrations | Accepted |
 | [0017](0017-module-web-services.md) | Web services for module pages; the file manager is a module | Accepted |
 | [0018](0018-resumable-uploads.md) | Resumable uploads | Accepted |
+| [0019](0019-locked-folder-view.md) | The Locked Folder view | Accepted |
 
 New record: copy [`template.md`](template.md) to the next number, and add it to this table.

@@ -279,7 +279,7 @@ class Executor:
             view.target(path, new=True)
 
     def _sensitive(self, action: ActionType, plan: Plan, view: ReadOnlyView) -> bool:
-        if action.sensitive:
+        if action.sensitive or plan.sensitive:
             return True
         paths = {*plan.reads, *plan.writes, *(p.path for p in plan.preconditions)}
         for path in paths:

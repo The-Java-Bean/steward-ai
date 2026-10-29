@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Unlock{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ base }}?path={{ preview.path|urlencode }}">← {{ preview.path }}</a></p>
+<h1>Unlock <code>{{ preview.path }}</code>?</h1>
+{% if not preview.allowed %}
+<p class="warning">{{ preview.reason }}</p>
+{% else %}
+<p class="warning">Unlocking makes this folder and what's inside it show up again in Files, search and (later) chat.</p>
+<p>That's <strong>{{ preview.files }}</strong> file{{ '' if preview.files == 1 else 's' }} ({{ preview.size|filesizeformat }}) in <strong>{{ preview.folders }}</strong> folder{{ '' if preview.folders == 1 else 's' }} inside, counting what steward-ai has scanned.</p>
+{% if preview.sample %}<ul>{% for p in preview.sample %}<li><code>{{ p }}</code></li>{% endfor %}{% if preview.files + preview.folders > preview.sample|length %}<li class="hint">and more</li>{% endif %}</ul>{% endif %}
+{% if preview.still_locked %}<p class="hint">These folders inside have their own lock and stay locked: {% for p in preview.still_locked %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{% if preview.type_locks %}<p class="hint">Its folder type locks it; unlocking overrides that for this folder only.</p>{% endif %}
+<p class="hint">Unlocking asks for your password. You can lock it again afterwards (Undo).</p>
+<form method="post" action="{{ base }}/unlock">
+  <input type="hidden" name="csrf_token" value="{{ form_token }}">
+  <input type="hidden" name="path" value="{{ preview.path }}">
+  <button type="submit">Unlock</button>
+  <a href="{{ base }}?path={{ preview.path|urlencode }}">Cancel</a>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Locked Folder{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+<h1>Locked Folder</h1>
+{% include "files_ui/_nav.html" %}
+{% include "files_ui/_undo.html" %}
+<p class="hint">Locked folders are hidden from every other view, from search and from chat. They stay where they are on disk; programs that read the disk directly can still see them.</p>
+<form method="get" action="{{ base }}/search" class="inline-row">
+  <label class="sr-only" for="locked-q">Search the Locked Folder</label>
+  <input id="locked-q" name="q" placeholder="Search the Locked Folder" maxlength="500">
+  <button type="submit" class="small">Search</button>
+</form>
+{% if folders %}
+<ul class="folders">
+  {% for f in folders %}<li><a href="{{ base }}?path={{ f.path|urlencode }}" class="dir">{{ f.name }}/</a> <span class="hint">{{ f.library_name }} · <code>{{ f.path }}</code> · type {{ f.type_name }}{% if f.permanent %} · permanently locked{% endif %}</span></li>{% endfor %}
+</ul>
+{% else %}
+<p>No folders are locked yet. Open a folder in <a href="/ui/files">Files</a> and choose <em>Lock folder…</em>, or give a folder the <code>private</code> type in <a href="/ui/settings/folders">folder settings</a>.</p>
+{% endif %}
+{% endblock %}

@@ -1,4 +1,9 @@
 <nav class="files-tabs" aria-label="Browse">
-  <a href="/ui/files?path={{ (libraries[0].path if libraries|length == 1 else '')|urlencode }}"{% if not kind %} aria-current="page"{% endif %}>Folders</a>
-  {% for k, title in kinds %}<a href="/ui/files?kind={{ k }}"{% if kind == k %} aria-current="page"{% endif %}>{{ title }}</a>{% endfor %}
+  {% if scope == 'locked' %}
+  <a href="{{ base }}"{% if not kind and not q is defined %} aria-current="page"{% endif %}>Locked folders</a>
+  {% else %}
+  <a href="{{ base }}?path={{ (libraries[0].path if libraries|length == 1 else '')|urlencode }}"{% if not kind %} aria-current="page"{% endif %}>Folders</a>
+  {% endif %}
+  {% for k, title in kinds %}<a href="{{ base }}?kind={{ k }}"{% if kind == k %} aria-current="page"{% endif %}>{{ title }}</a>{% endfor %}
+  {% if scope == 'locked' %}<a href="{{ base }}/search"{% if q is defined %} aria-current="page"{% endif %}>Search</a>{% endif %}
 </nav>

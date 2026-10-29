@@ -6,7 +6,7 @@
 {% include "files_ui/_nav.html" %}
 {% if libraries %}
 <ul class="libraries">
-  {% for lib in libraries %}<li><a href="/ui/files?path={{ lib.path|urlencode }}">{{ lib.name }}</a> <span class="hint">({{ lib.library_id }})</span></li>{% endfor %}
+  {% for lib in libraries %}<li><a href="{{ base }}?path={{ lib.path|urlencode }}">{{ lib.name }}</a> <span class="hint">({{ lib.library_id }})</span></li>{% endfor %}
 </ul>
 {% else %}
 <p>No libraries yet. Add one in the setup wizard or with <code>steward folders import</code>.</p>

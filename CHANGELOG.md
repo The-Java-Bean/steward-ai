@@ -7,6 +7,18 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- The Locked Folder (`/ui/locked`, ADR 0019): behind a password check (subject to the
+  re-auth window), the locked folders and the full file manager inside them (uploads,
+  new folder, rename, move, delete to the locked trash, previews, downloads, zips),
+  files by kind and search inside. Lock a folder from Files ("Lock folder…", optionally
+  permanent); unlock from the Locked Folder after a preview of what becomes visible
+  (password again); make a lock permanent there. Moving items out of the Locked Folder
+  asks for a confirmation and the password. A privacy test walks every route with
+  locked paths.
+- SDK: `Files.search`, `Files.locked_folders`, `Files.unlock_preview`, `by_kind(scope=)`,
+  `FilePage` (`KindPage` stays as an alias), `LockedFolder`, `UnlockPreview`,
+  `FolderListing.lock_from`, `PathPolicy.lock_from`/`permanent`, `Plan.sensitive`,
+  `GuardedFS.set_lock(permanent=)`.
 - Resumable uploads (ADR 0018): drag-and-drop or choose files in the file manager; large
   files go up in pieces, survive dropped connections and server restarts, and resume
   when the same file is chosen again (even after closing the browser); a name that's
@@ -129,6 +141,10 @@ All notable changes to steward-ai are recorded here. The format follows
   allow-list, generated `THIRD_PARTY_NOTICES.md`.
 
 ### Changed
+- `folder.lock` takes `permanent` (sensitive; can't be undone) and can make an existing
+  lock permanent; `folder.unlock` refuses permanent locks and locks set on a parent
+  folder already when planning. The locked search scope leaves out locked trash and
+  other hidden folders inside locked folders. `files_ui` 0.2.0.
 - The page Content-Security-Policy also allows same-origin media, frames (PDF
   previews) and `fetch`; `base.html` has a `head` block for module stylesheets.
 - `deploy/compose.example.yaml` runs `steward api` with a health check; the worker

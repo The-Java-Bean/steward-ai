@@ -654,10 +654,18 @@ class Edit(_Action):
 
 class LockParams(_Params):
     path: LibraryPath
+    permanent: bool = False
+    """Only removable on the host afterwards (`steward folders unlock --permanent`)."""
+
+
+class UnlockParams(_Params):
+    path: LibraryPath
 
 
 class Lock(_Action):
-    """Lock a folder: hide it everywhere except the Locked Folder view."""
+    """Lock a folder: hide it everywhere except the Locked Folder view. With `permanent`
+    the lock can't be removed from the UI or API (and can't be undone); making a lock
+    permanent is sensitive. A folder locked here already can be made permanent."""
 
     name = "folder.lock"
     params = LockParams
@@ -668,21 +676,34 @@ class Lock(_Action):
         state = _existing(view, params.path)
         if state.kind != "dir":
             raise ActionRefused(f"{params.path} isn't a folder")
-        if view.settings(params.path).locked:
+        current = view.settings(params.path)
+        if current.locked and not params.permanent:
             raise ActionRefused(f"{params.path} is already locked")
+        if current.locked and current.permanent:
+            raise ActionRefused(f"{params.path} is already permanently locked")
+        if current.locked and current.lock_from != params.path:
+            raise ActionRefused(
+                f"{params.path} is locked because {current.lock_from} is; "
+                "make that lock permanent instead"
+            )
+        what = "Lock folder" if not current.locked else "Make the lock permanent on"
+        suffix = " permanently" if params.permanent and not current.locked else ""
         return Plan(
             self.name,
             params.model_dump(mode="json"),
-            f"Lock folder {params.path}",
+            f"{what} {params.path}{suffix}",
             preconditions=(state,),
+            sensitive=params.permanent,
         )
 
     def apply(self, plan: Plan, fs: GuardedFS) -> Applied:
         p = LockParams.model_validate(plan.params)
-        fs.set_lock(p.path, True)
-        return Applied({"path": p.path}, post=(fs.state(p.path),))
+        fs.set_lock(p.path, True, permanent=p.permanent)
+        return Applied({"path": p.path, "permanent": p.permanent}, post=(fs.state(p.path),))
 
     def inverse(self, plan: Plan, applied: Applied, view: ReadOnlyFS) -> Plan | None:
+        if applied.result.get("permanent"):
+            return None  # only `steward folders unlock --permanent` removes it
         path = str(applied.result["path"])
         return Plan(
             Unlock.name,
@@ -692,23 +713,33 @@ class Lock(_Action):
         )
 
     def examples(self) -> list[dict[str, Any]]:
-        return [{"path": "lib:photos"}]
+        return [{"path": "lib:photos"}, {"path": "lib:docs", "permanent": True}]
 
 
 class Unlock(_Action):
     """Unlock a folder. Refused for permanent locks and for locks set on a parent."""
 
     name = "folder.unlock"
-    params = LockParams
+    params = UnlockParams
     sensitive = True
 
     def plan(self, params: BaseModel, view: ReadOnlyFS) -> Plan:
-        assert isinstance(params, LockParams)  # noqa: S101
+        assert isinstance(params, UnlockParams)  # noqa: S101
         state = _existing(view, params.path)
         if state.kind != "dir":
             raise ActionRefused(f"{params.path} isn't a folder")
-        if not view.settings(params.path).locked:
+        current = view.settings(params.path)
+        if not current.locked:
             raise ActionRefused(f"{params.path} isn't locked")
+        if current.lock_from != params.path:
+            raise ActionRefused(
+                f"{params.path} is locked because {current.lock_from} is; unlock that instead"
+            )
+        if current.permanent:
+            raise ActionRefused(
+                f"{params.path} is permanently locked; only `steward folders unlock "
+                "--permanent` on the server can unlock it"
+            )
         return Plan(
             self.name,
             params.model_dump(mode="json"),
@@ -717,7 +748,7 @@ class Unlock(_Action):
         )
 
     def apply(self, plan: Plan, fs: GuardedFS) -> Applied:
-        p = LockParams.model_validate(plan.params)
+        p = UnlockParams.model_validate(plan.params)
         fs.set_lock(p.path, False)
         return Applied({"path": p.path}, post=(fs.state(p.path),))
 

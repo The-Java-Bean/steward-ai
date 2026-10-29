@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Search the Locked Folder{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ static_url }}/files.css">{% endblock %}
+{% block content %}
+{% include "files_ui/_nav.html" %}
+<h1>Search the Locked Folder</h1>
+<form method="get" action="{{ base }}/search" class="inline-row">
+  <label class="sr-only" for="locked-q">Words in the name or path</label>
+  <input id="locked-q" name="q" value="{{ q }}" placeholder="Words in the name or path" maxlength="500" autofocus>
+  <button type="submit" class="small">Search</button>
+</form>
+{% if found is not none %}
+<p class="hint">{{ found.total }}{% if found.capped %}+{% endif %} files found in locked folders. Only files steward-ai has already scanned are found.</p>
+{% include "files_ui/_found.html" %}
+<p>
+  {% if page > 1 %}<a href="{{ base }}/search?q={{ q|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if found.total > page * per_page %}<a href="{{ base }}/search?q={{ q|urlencode }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
+</p>
+{% endif %}
+{% endblock %}

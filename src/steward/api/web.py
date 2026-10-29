@@ -31,12 +31,14 @@ from steward.sdk.web import (
     ActionDone,
     ActionPreview,
     Entry,
+    FilePage,
     FolderListing,
-    KindPage,
     LibraryInfo,
+    LockedFolder,
     NotFound,
     Scope,
     StepOutcome,
+    UnlockPreview,
     Viewer,
 )
 
@@ -168,9 +170,41 @@ class WebFiles:
         return self.web.browser().entry(path, scope=scope)
 
     def by_kind(
-        self, kind: str, *, library: str | None = None, limit: int = 100, offset: int = 0
-    ) -> KindPage:
-        return self.web.browser().by_kind(kind, library=library, limit=limit, offset=offset)
+        self,
+        kind: str,
+        *,
+        library: str | None = None,
+        scope: Scope = "normal",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> FilePage:
+        self.web.check_scope(scope)
+        return self.web.browser().by_kind(
+            kind, library=library, scope=scope, limit=limit, offset=offset
+        )
+
+    def search(
+        self,
+        query: str,
+        *,
+        scope: Scope = "normal",
+        folder: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> FilePage:
+        self.web.check_scope(scope)
+        return self.web.browser().search(
+            query, scope=scope, folder=folder, kind=kind, limit=limit, offset=offset
+        )
+
+    def locked_folders(self) -> list[LockedFolder]:
+        self.web.check_scope("locked")
+        return self.web.browser().locked_folders()
+
+    def unlock_preview(self, path: str) -> UnlockPreview:
+        self.web.check_scope("locked")
+        return self.web.browser().unlock_preview(path)
 
     def read_text(self, path: str, *, scope: Scope = "normal", max_bytes: int) -> tuple[str, bool]:
         self.web.check_scope(scope)
