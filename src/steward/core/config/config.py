@@ -323,6 +323,11 @@ class PrivacyConfig(_ConfigFile):
     Setting this replaces the default list; use `extra_secret_patterns` to add to it."""
     extra_secret_patterns: tuple[str, ...] = ()
     rules: tuple[PrivacyRule, ...] = ()
+    content_scan: bool = True
+    """Look through text for credentials before storing it; a file that holds one becomes
+    `excluded` and what was derived from it is deleted (docs/adr/0029)."""
+    content_scan_ignore: tuple[str, ...] = ()
+    """Files matching these aren't scanned, for false positives (same pattern syntax)."""
 
 
 # --- llm.yaml -------------------------------------------------------------------

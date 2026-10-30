@@ -3,7 +3,8 @@
 """Stage jobs and the jobs that plan them.
 
 - `core.stage.<stage>` (on the stage's lane, payload `content_hash`): run one stage on
-  one content, record the result in `stage_runs`, then plan what depends on it.
+  one content, record the result in `stage_runs`, then plan what depends on it. Text
+  holding a credential stops it: the file is held back (docs/adr/0029).
 - `core.stages.plan` (`cpu`): plan the files named in new `file.*` events, read from
   the outbox with the planner's own cursor. The worker's housekeeping queues it when
   such events exist; folder and folder-type changes queue a full pass instead.
@@ -14,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, time
 from typing import Any
 
@@ -37,7 +38,7 @@ from steward.core.discovery.hashing import HASH_STAGE, HASH_STAGE_VERSION
 from steward.core.discovery.watcher import SCAN_JOB
 from steward.core.folders import load_policy
 from steward.core.llm import Gateway, PrivacyViolation
-from steward.core.privacy import PrivacyRules
+from steward.core.privacy import SCAN_ACTOR, PrivacyRules, SecretFound, set_override
 from steward.core.stages.context import Context
 from steward.core.stages.graph import StageGraph
 from steward.core.stages.planner import (
@@ -51,6 +52,7 @@ from steward.core.stages.planner import (
 from steward.sdk import (
     Daily,
     FileChanged,
+    FileInfo,
     JobContext,
     JobHandler,
     ModelUnavailable,
@@ -305,12 +307,16 @@ def _stage_handler(
             roles={role: graph.roles[role] for role in stage.roles},
             gateway=gateway,
             provenance=tuple(f.file_id for f in rows),
+            scan_text=any(planner.privacy.scans_content(f.relpath) for f in rows),
         )
         try:
             try:
                 result = stage.run(sctx) or StageResult()
             except PrivacyViolation:
                 result = StageResult("skipped", "not sent to the model (privacy rules)")
+            except SecretFound as exc:
+                _hold_back(dbs, planner, content_hash, rows, exc.rule)
+                return
             if not sctx.unchanged():
                 raise FileChanged("file changed while the stage ran")
         except FileChanged:
@@ -353,6 +359,39 @@ def _stage_handler(
             planner.plan_hashes([content_hash])
 
     return run
+
+
+def _hold_back(
+    dbs: Databases,
+    planner: Planner,
+    content_hash: str,
+    rows: Sequence[FileInfo],
+    rule: str,
+) -> None:
+    """Make every copy `excluded` and delete all that was derived from this content (rows
+    of the other tables go with the blob). A path scan drops the files' hash; a copy under
+    `content_scan_ignore` gets its blob back from that scan and is indexed."""
+    libraries: dict[str, list[str]] = {}
+    for file in rows:
+        libraries.setdefault(file.library_id, []).append(file.relpath)
+    with dbs.state.write() as conn:
+        for file in rows:
+            if planner.privacy.scans_content(file.relpath):
+                set_override(conn, file.file_id, "excluded", actor=f"{SCAN_ACTOR}:{rule}")
+        for library_id, paths in libraries.items():
+            queue.enqueue(
+                conn,
+                SCAN_JOB,
+                lane="io",
+                payload={"library_id": library_id, "paths": paths},
+                max_attempts=planner.max_attempts,
+            )
+    with dbs.index.write() as conn:
+        conn.execute(delete(blobs).where(blobs.c.content_hash == content_hash))
+    log.warning(
+        "file held back: its text holds a credential",
+        extra={"fields": {"content_hash": content_hash, "rule": rule, "files": len(rows)}},
+    )
 
 
 def _record(

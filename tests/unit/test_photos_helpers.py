@@ -7,13 +7,16 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
-from photos_support import make_jpeg, make_png
+from photos_support import make_fake_exiftool, make_jpeg, make_png
 from PIL import Image, UnidentifiedImageError
 
 from steward.modules.files_ui.details import detail_rows
-from steward.modules.photos import caption, exif, images
+from steward.modules.photos import caption, exif, images, raw
 from steward.sdk import FileDetails
 
 # --- EXIF ----------------------------------------------------------------------------
@@ -208,3 +211,86 @@ def test_detail_rows_combine_and_label() -> None:
     ]
     utc = FileDetails(properties={"exif": {"taken": "2022-12-24T18:00:00Z"}})
     assert detail_rows(utc) == [("Taken", "2022-12-24 18:00 UTC")]
+
+
+# --- RAW previews ---------------------------------------------------------------------
+
+
+def _raw(tmp_path: Path, record: Mapping[str, object], *, tail: bytes = b"") -> tuple[Path, str]:
+    """A fake RAW file and the fake exiftool that answers with `record` for it."""
+    path = tmp_path / "shot.cr3"
+    path.write_bytes(b"EXIF:" + json.dumps(record).encode() + b"\n" + tail)
+    return path, str(make_fake_exiftool(tmp_path / "bin"))
+
+
+def _b64(data: bytes) -> str:
+    return "base64:" + base64.b64encode(data).decode()
+
+
+def _prepare(path: Path, command: str, *, min_side: int = 64, timeout_s: float = 10) -> Image.Image:
+    with path.open("rb") as f:
+        jpeg = raw.prepare(
+            f,
+            command=command,
+            timeout_s=timeout_s,
+            max_side=512,
+            min_side=min_side,
+            max_pixels=10_000_000,
+        )
+    return Image.open(io.BytesIO(jpeg))
+
+
+def test_a_raw_file_gives_its_preview(tmp_path: Path) -> None:
+    path, command = _raw(tmp_path, {"PreviewImage": _b64(make_jpeg((600, 400)))})
+    assert _prepare(path, command).size == (512, 341)
+
+
+def test_a_preview_is_turned_by_the_raw_files_orientation(tmp_path: Path) -> None:
+    record = {"Orientation": 6, "PreviewImage": _b64(make_jpeg((600, 400)))}
+    path, command = _raw(tmp_path, record)
+    assert _prepare(path, command).size == (341, 512)
+
+
+def test_a_previews_own_orientation_isnt_applied_twice(tmp_path: Path) -> None:
+    record = {"Orientation": 6, "PreviewImage": _b64(make_jpeg((600, 400), orientation=1))}
+    path, command = _raw(tmp_path, record)
+    assert _prepare(path, command).size == (512, 341)
+
+
+def test_a_preview_too_small_gives_way_to_the_next(tmp_path: Path) -> None:
+    record = {
+        "PreviewImage": _b64(make_jpeg((80, 60))),
+        "JpgFromRaw": _b64(make_jpeg((800, 600))),
+    }
+    path, command = _raw(tmp_path, record)
+    assert _prepare(path, command, min_side=256).size == (512, 384)
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {},
+        {"Orientation": 6},
+        {"PreviewImage": _b64(make_jpeg((80, 60)))},
+        {"PreviewImage": _b64(b"not an image")},
+        {"PreviewImage": "base64:***"},
+        {"PreviewImage": "(Binary data 100 bytes)"},
+        {"PreviewImage": _b64(make_png((600, 400)))},
+    ],
+)
+def test_a_raw_file_without_a_usable_preview(tmp_path: Path, record: dict[str, object]) -> None:
+    path, command = _raw(tmp_path, record)
+    with pytest.raises(raw.NoPreview):
+        _prepare(path, command, min_side=256)
+
+
+def test_exiftool_failing_means_no_preview(tmp_path: Path) -> None:
+    path, command = _raw(tmp_path, {}, tail=b"FAIL")
+    with pytest.raises(raw.NoPreview):
+        _prepare(path, command)
+
+
+def test_a_hanging_exiftool_is_stopped_for_a_preview(tmp_path: Path) -> None:
+    path, command = _raw(tmp_path, {}, tail=b"SLEEP")
+    with pytest.raises(exif.ExifTimedOut):
+        _prepare(path, command, timeout_s=0.5)

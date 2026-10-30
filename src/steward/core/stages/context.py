@@ -21,6 +21,7 @@ from steward.core.db import Databases
 from steward.core.llm import ChatRequest, EmbedRequest, Gateway
 from steward.core.llm import structured as structured_output
 from steward.core.llm.roles import RoleState
+from steward.core.privacy import SecretFound, find_secret
 from steward.core.stages.isolate import run_isolated
 from steward.core.tags import store as tag_store
 from steward.core.tags.names import TagError, normalize
@@ -65,6 +66,8 @@ class Context:
     gateway: Callable[[], Gateway] | None = field(default=None, repr=False)
     provenance: tuple[str, ...] = ()
     """Every present file with this content (sent with each model call)."""
+    scan_text: bool = False
+    """Look through text for credentials before storing it (docs/adr/0029)."""
 
     @property
     def path(self) -> Path:
@@ -149,6 +152,8 @@ class Context:
 
     def write_text(self, parts: Sequence[TextPart], *, artifact: str = "text") -> None:
         self._allowed(artifact, write=True)
+        if self.scan_text and (found := find_secret(p.body for p in parts)):
+            raise SecretFound(found)
         with self.dbs.index.write() as conn:
             content.write_text(conn, self.blob.content_hash, artifact, parts)
 

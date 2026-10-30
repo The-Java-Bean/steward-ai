@@ -227,8 +227,11 @@ BMP; not icons under 256 pixels), so you can find photos by what's in them: "cat
 "birthday cake", or by meaning ("kitty" finds the cat). Images are scaled down to 1024
 pixels before they're sent, and photos in locked or local-only folders only go to
 `local` model servers. The file manager shows the description and metadata under
-**Details** on a file's page. Your photos are never changed. HEIC and camera RAW files get
-metadata but no description yet.
+**Details** on a file's page. Your photos are never changed. Camera RAW files (CR2, CR3,
+NEF, ARW, DNG and others) are described from the JPEG preview stored inside them, which
+needs exiftool; a RAW file with no usable preview, as some phones write, gets metadata only
+(`raw_previews: false` in the `photos` settings turns this off). HEIC files get metadata
+but no description yet.
 
 **XMP sidecars.** In folders whose type has `sidecars` (the built-in `media` type does;
 add `sidecars: true` to any other), a photo's tags and description are also written to
@@ -390,6 +393,21 @@ Key files, password databases, `.env` files and similar are excluded by default.
 model calls go through one gateway that enforces this; remote model servers aren't
 supported yet and are refused at startup.
 
+Names don't catch a password inside an ordinary config file or note, so text is also looked
+through before it's stored. A file holding a private key, a token or a credential value is
+**held back**: it becomes `excluded`, and whatever was derived from it is deleted. It stays
+findable by name, and `/ui/health` warns about it. Placeholders such as `${DB_PASSWORD}` or
+`changeme` don't count.
+
+```sh
+steward files held-back     # which files, and what was found (never the value)
+```
+
+Take the credential out and the file is read again by itself. For a false positive, add
+the path to `content_scan_ignore` in `privacy.yaml`, restart, then run `steward files
+sensitivity <file> clear`. `content_scan: false` turns the scan off. It can't catch
+everything: a plain-word password, or one in a photo, which a vision model sees first.
+
 ### File manager *(implemented)*
 **Files** (`/ui/files`) is your drive in the browser. Browse by folder, or by kind
 (images, videos, documents, …) across every library. Click a file to preview it
@@ -520,11 +538,12 @@ steward reindex             # says what will happen, asks, backs up, rebuilds
 steward reindex --status    # how far it got
 ```
 
-It works with steward-ai running: search keeps answering (results fill up again), and for
-a few minutes on a big index other background work waits. Every file is read and every
+It works with steward-ai running: search keeps answering, with a notice that files are
+missing until it's done, and for a few minutes on a big index other background work waits. Every file is read and every
 model runs again, so a large library takes as long as the first time. Results from a
 model that isn't mapped any more don't come back; the command lists those first. Sidecars
-aren't touched until the rebuild is over.
+aren't touched until the rebuild is over. It's also how an upgrade that recognizes more file
+types reaches files you already have.
 
 If `index.db` is lost or damaged: stop steward-ai, delete `index.db`, `index.db-wal` and
 `index.db-shm`, run `steward reindex`, start it again. A worker that finds the index gone
@@ -607,8 +626,10 @@ steps, log). Read them first if present. A maintainer-only design document
   tags …`, bootstrap (ADR 0025). Chunk 6 done: XMP sidecars (`photos.sidecars`,
   `photos.sidecar_sync`), `JobContext.library`/`.actions`, sidecars moving with files
   (ADR 0026). Chunk 7 done: `steward reindex`, scanner repair, `steward eval` with
-  sets shipped in modules, acceptance tests on two layouts (ADRs 0027, 0028). Phase 3 is
-  complete; next is Phase 4 (chat and AI actions).
+  sets shipped in modules, acceptance tests on two layouts (ADRs 0027, 0028). Item 8,
+  fixes from testing on real files: text by content, RAW previews, credentials in file
+  contents, search saying when it's rebuilding (ADRs 0029, 0030). Next is Phase 4 (chat and
+  AI actions).
 - **Phase 2 (files, Locked Folder, shares): all 5 chunks done** (1: module web SDK +
   `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018; 3: the Locked
   Folder `/ui/locked`, ADR 0019; 4: share links, the `shares` module and the core `/s/`
@@ -674,7 +695,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/executor/guarded.py` | `ReadOnlyView` (policy + state_db + clock; `target(path, new=)`, `trash_folder` rules), `Guarded` (the `GuardedFS`; `allowed_writes` compared in NFC; `actor` set by the executor; DB ops incl. `write_state` deferred to the executor's transaction); `ReadOnlyView` takes `rules` (`PrivacyRules`) for `privacy()`, `open_dir` (`O_NOFOLLOW` per component), `_rename_noreplace` (`renameat2`), `_link_new` (temp + fsync + link), `check_segments`, `content_hash`, `within`, `TEMP_PREFIX` (`.steward-tmp-`, also ignored by discovery), `LOCKED_TRASH` |
 | `src/steward/core/executor/actions.py` | Core action types `file.mkdir` (parents, private → 0700), `file.mkdirs`, `file.rmdir`, `file.move` (parents, `remove_empty` for undo), `file.rename`, `file.delete` (sensitive; trash `<YYYY-MM-DD>/<relpath>`, locked sources → `trash/locked`), `file.create`, `file.edit` (expected hash, backup to `edit_backups/YYYY/MM/<file_id>/`), `folder.lock` (`LockParams` path + `permanent`; permanent → `Plan.sensitive`, no inverse; can make an own lock permanent), `folder.unlock` (`UnlockParams`; sensitive; refuses permanent and inherited locks at plan time); `BUILTIN_ACTIONS`, `register_actions`, `MAX_TEXT_BYTES` |
 | `src/steward/core/executor/executor.py` | `Executor(dbs, actions, clock=, max_attempts=, rules=)` (`Runtime.executor` passes `runtime.privacy`; `_view(policy)`) (sensitive = type flag, `plan.sensitive` or a locked path): `preview`, `run(name, params, actor=, confirmed=, proposal_id=)`, `undo(entry_id, actor=, confirmed=)`, `get`, `entries(limit=, before=)`; `JournalEntry` (`undoable`, `paths`), `Preview`, `ActionFailed`, `SensitiveActionError`. One transaction per action: DB ops, file/folder identities follow moves, journal row, `action.applied` event, `core.scan` jobs (priority 20) |
-| `src/steward/core/privacy/` | `rules.py` `matches(relpath, pattern)`, `PrivacyRules` (`from_config`, `is_secret`, `level_for`); `classify.py` `Classifier` (`load(conn, rules)`, `for_path`, `for_files`) → `FileClass(sensitivity, locked, visible, shareable, known)`, `UNKNOWN`; `overrides.py` `set_override(conn, file_id, level|None, actor=)` (event `file.sensitivity_changed`); `sharing.py` `SharingRules(policy, rules, overrides by (lib, relpath))` (`load(conn, policy, rules)`, cached `check(lib, relpath)` → `PathPrivacy`: path judged as file (parent settings) and folder (own), `Visibility.is_hidden`, rules, overrides; reasons), `HIDDEN` |
+| `src/steward/core/privacy/` | `rules.py` `matches(relpath, pattern)`, `PrivacyRules` (`from_config`, `is_secret`, `level_for`, `scans_content`); `secrets.py` `find_secret`, `SecretFound`; `classify.py` `Classifier` (`load(conn, rules)`, `for_path`, `for_files`) → `FileClass(sensitivity, locked, visible, shareable, known)`, `UNKNOWN`; `overrides.py` `set_override(conn, file_id, level|None, actor=)` (event `file.sensitivity_changed`); `sharing.py` `SharingRules(policy, rules, overrides by (lib, relpath))` (`load(conn, policy, rules)`, cached `check(lib, relpath)` → `PathPrivacy`: path judged as file (parent settings) and folder (own), `Visibility.is_hidden`, rules, overrides; reasons), `HIDDEN` |
 | `src/steward/core/llm/` | `transport.py` `ChatRequest`, `EmbedRequest` (both with `timeout_s` override), `ModelResponse`, `ModelTransport`, `OpenAICompatibleTransport` (stdlib urllib); `gateway.py` `Gateway(config, state_db, privacy, transport, clock=)` `.route(role)`, `.call(role, request, provenance=, purpose=, taint=, allow_local_fallback=)` → `GatewayResult` (circuit breaker per endpoint: `down_for`, `_mark_down`, 30 s doubling to 900 s, `_down` dict), `.role_config(role)`; `model_key(role_cfg, embed=)` (`model` or `model|dims|sha8(document_prefix)`); `PrivacyViolation`, `RoleNotConfigured`, `check_llm_config` (refuses remote endpoints for now); `roles.py` `resolve_roles(declared, llm_config)` → `{role: RoleState(name, kind, description, modules, vision, endpoint, model, problem, model_key; usable)}`, `RoleDeclarationError` (kinds disagree); `structured.py` `run(send, role_cfg, schema, messages, retries=)`, `first_request`, `clean` (think blocks, fences, outer braces), `describe` (errors without input); `probe.py` `probe_role(gateway, role, kind)` → `Check`s, `red_png`. Only this package may use `urllib`/`openai`; `gateway.with_reasoning(request, role_cfg)` adds `reasoning_effort` to chat requests when the role's `reasoning` isn't `default` (applied in `Gateway.call` for the routed role) |
 | `src/steward/core/embeddings.py` | Embedding spaces (ADR 0023): `pack` (L2-normalized little-endian float32, rejects empty/zero/non-finite, ≤16384 dims), `unpack`, `Space`, `spaces`, `find_space(conn, role, model_key)`, `ensure_space(conn, role=, mapping=, model_key=, dims=)` (dims must match), `write(conn, hash, space=, source=, vectors=)` (one per chunk of `source` in seq order, replaces the content's rows in that space), `count`, `load_vec(sqlite3_conn)` (sqlite-vec; False if extensions can't load), `VectorQuery(space_id, vector, min_similarity, depth=50)`, `QueryEmbedder(dbs, gateway, roles)` (`Runtime.query_embedder`; first usable embed role with a space for its current key; `query_prefix`, 15 s timeout, LRU 128; raises `ModelUnavailable`), `EmbeddingError` |
 | `src/steward/core/reindex.py` | Rebuilding `index.db` in place (`request`, `reset`, `settle`, `claimable`, `lost`, `summary`, job `core.index.rebuild`) |
@@ -704,7 +725,7 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/modules/search/` | Built-in module `search` 0.1.0 (entry point, on by default, requires `documents`; ADR 0023): `SearchConfig` (`batch_size` 16, `max_chunks` 5000), role `embed` (kind embed), stage `search.embed` v1 (`chunks` → `embeddings`, lane `llm-local`, `roles=("embed",)`; `chunk_text(heading, body)`; over `max_chunks` → `skipped` and the content's vectors cleared) |
 | `src/steward/modules/photos/sidecars.py`, `migrations/state/0001_sidecars.py` | XMP sidecars (ADR 0026): `wanted(tags, caption)`, `merge(want, record, current)` → `(Edit, Record)`, `looks_like_xmp`, `read_current`/`apply_edits`/`edit_args` (exiftool in a temp folder under fixed names), action `SidecarSync` (`photos.sidecar_sync`), job class `Syncer`, `save`, `export`; tables `photos_sidecars` (`file_id`, `path`, `data`, `updated_at`), `photos_sidecar_runs` (last `revision`) |
 | `src/steward/core/library.py`, `src/steward/sdk/library.py` | `Library` (`JobContext.library`: `revision`, `files`, `read`; leaves out locked, hidden, excluded) and `ModuleActions` (`JobContext.actions`, actor `module:<name>`, never confirmed, executor lane only) |
-| `src/steward/modules/photos/` | Built-in module `photos` 0.2.0 (entry point, on by default, no `requires`; ADR 0024): `__init__.py` `PhotosConfig` (`exif`, `exif_command`, `exif_timeout_s` 30, `exif_memory_mib` 512, `captions`, `caption_max_file_mib` 100, `caption_min_side` 256, `caption_max_side` 1024, `caption_max_megapixels` 100, `caption_max_chars` 1000, `caption_max_tokens` 512, `caption_timeout_s` 60, `caption_memory_mib` 1024), stage `photos.exif` (v = 100·`EXIF_VERSION` + `exif.VERSION`; `mime` → `exif` properties, cpu, `index="metadata"`, kind image/video; registered only if `shutil.which(exif_command)`), health check `photos.exif`, role `caption` (chat, vision; only if `captions`), stage `photos.caption` (v = 10000·`CAPTION_VERSION` + 100·`images.VERSION` + `caption.PROMPT_VERSION`; `mime` → `text:caption`, `llm-local`, `images.MIME_TYPES` ≤ max size; options temperature 0.2 + `max_tokens`; `prompt_version` `caption.v1`), `SKIP_REASONS`; `exif.py` `read_metadata(file, command=, timeout_s=)` (child: `ARGS` + `STDIN_PATH` `/dev/stdin`, env `LC_ALL`+`PATH`, stderr dropped, `ExifFailed`/`ExifTimedOut`), `normalize(record)`, `parse_date`; `images.py` `prepare(file, max_side=, min_side=, max_pixels=)` → JPEG bytes (`FORMATS`, draft, `exif_transpose`, alpha onto white; `TooSmall`, `TooManyPixels`); `caption.py` `prompt()` (package resource `prompts/caption/caption.v<N>.md`), `messages(jpeg)` (system + text + `image_url` data URL), `clean(answer, max_chars)` |
+| `src/steward/modules/photos/` | Built-in module `photos` 0.2.0 (entry point, on by default, no `requires`; ADRs 0024, 0030; `raw.py` previews of RAW files): `__init__.py` `PhotosConfig` (`exif`, `exif_command`, `exif_timeout_s` 30, `exif_memory_mib` 512, `captions`, `caption_max_file_mib` 100, `caption_min_side` 256, `caption_max_side` 1024, `caption_max_megapixels` 100, `caption_max_chars` 1000, `caption_max_tokens` 512, `caption_timeout_s` 60, `caption_memory_mib` 1024), stage `photos.exif` (v = 100·`EXIF_VERSION` + `exif.VERSION`; `mime` → `exif` properties, cpu, `index="metadata"`, kind image/video; registered only if `shutil.which(exif_command)`), health check `photos.exif`, role `caption` (chat, vision; only if `captions`), stage `photos.caption` (v = 10000·`CAPTION_VERSION` + 100·`images.VERSION` + `caption.PROMPT_VERSION`; `mime` → `text:caption`, `llm-local`, `images.MIME_TYPES` ≤ max size; options temperature 0.2 + `max_tokens`; `prompt_version` `caption.v1`), `SKIP_REASONS`; `exif.py` `read_metadata(file, command=, timeout_s=)` (child: `ARGS` + `STDIN_PATH` `/dev/stdin`, env `LC_ALL`+`PATH`, stderr dropped, `ExifFailed`/`ExifTimedOut`), `normalize(record)`, `parse_date`; `images.py` `prepare(file, max_side=, min_side=, max_pixels=)` → JPEG bytes (`FORMATS`, draft, `exif_transpose`, alpha onto white; `TooSmall`, `TooManyPixels`); `caption.py` `prompt()` (package resource `prompts/caption/caption.v<N>.md`), `messages(jpeg)` (system + text + `image_url` data URL), `clean(answer, max_chars)` |
 | `src/steward/modules/shares/` | Built-in module `shares` 0.1.0 (entry point, on by default; ADR 0020): `__init__.py` `SharesModule` (state migrations `migrations/state/0001_shares.py`, actions, page `shares.page` at `/ui/shares` with `badge=store.count_no_expiry`, `share_links(public.handle)`, job + `Every(15 min)` schedule `shares.expire` (lane `io`, `expire(ctx)`), exporter `store.export`); `store.py` (tables `shares_links`, `shares_snapshot`, `shares_access`; `Share` (`status(now)`, `active`, `ended`), `get`, `by_token`, `listing(past=, since=)`, `count_no_expiry`, `snapshot_ids`, `accesses`, `record` (counts all but `password_failed`), `failures`, `insert_share`, `change`/`end` (only while not ended), `expire_due`, `export` (no token/hash, `has_password`)); `credentials.py` (`new_token`, `new_share_id`, `suggest_password`, argon2 `hash_password`/`verify_password` (semaphore 2, `_hasher` patched in tests), `make_grant`/`check_grant` (HMAC keyed by the hash), `GRANT_COOKIE`, 12 h); `actions.py` (`shares.create` `CreateParams(path, expires_at, password, snapshot, share_id)`, `shares.update` `UpdateParams(share_id, expiry keep/set/never, expires_at, password_change keep/set/remove, new_password)`, `shares.revoke` `RevokeParams(share_id, reason revoked/undone)`; secrets in `Plan.transient`); `public.py` (`handle`: token → active share → password/grant → `open` → zip/raw/page; failures limit 10/address, 100/share per 15 min → 429; access log); `routes.py` (`/ui/shares` list (`status`, `q` on shown names, `age`), `GET|POST /new` (dialog; `created.html` shows link + password once), `GET /{id}`, `GET|POST /{id}/edit`, `POST /{id}/revoke`, `POST /undo`; hidden items → `name=None`); templates `list`, `new`, `created`, `detail`, `edit`, `errors`, `_row_item`, `_link`, `public/password|file|folder`; static `shares.css`, `shares.js` (copy buttons) |
 | `src/steward/modules/files_ui/` | Built-in module `files_ui` 0.3.0 (Share links via `web.page_url("shares.page")` in the normal scope only) (entry point in `pyproject.toml`, on by default): `__init__.py` `FilesUiModule` (pages `files_ui.page` at `/ui/files` and `files_ui.locked` at `/ui/locked` "Locked Folder", same `templates/` + `static/`, link builder `files_ui.links`); `routes.py` `make_router(scope)` → `router` (normal) and `locked_router` (router dependency `_gate`: `recently_authenticated()` else `require_reauth()`): `GET ""` (`?path=` folder, `?kind=` by kind, no path → libraries / the only library (normal) or `locked.html` list of `locked_folders()` (locked); `did`/`n`/`undo` → `done_notice` + Undo, rendered together by `_undo.html` as one `.notice-bar`; the key isn't `notice` so the core layout doesn't show it a second time), `GET /view`, `GET /raw` (`inline=1`), `GET /zip`, `POST /mkdir`, `GET|POST /rename`, `GET|POST /move` (picker `to=`, `to_scope=` honoured only in the locked router; moving out needs `confirm_out` else 409), `GET|POST /delete`, `GET|POST /lock` (normal: lock, `permanent` optional; locked: only make permanent), `POST /undo`; locked only: `GET /search?q=`, `GET|POST /unlock` (preview page, then `folder.unlock`, redirect to `/ui/files`). Templates get `base`/`scope`: `browse`, `kind`, `libraries`, `locked`, `search`, `lock`, `unlock`, `view`, `rename`, `move`, `delete`, `errors` + partials `_nav`, `_crumbs`, `_undo`, `_back`, `_found`; `details.py` `detail_rows(FileDetails)` → (label, value) lines (Taken, Size, Location combined; `LABELS`, `SKIPPED`); `view.html` "Details" section (description + `<dl>`), `.details` CSS |
 | `src/steward/core/executor/uploads.py` | `Uploads(dbs, executor, UploadsConfig, clock=)` (`Runtime.uploads`): `start(folder, name, size, actor=, confirmed=)` (checks; creates `UPLOAD_PREFIX + id` exclusively; `SensitiveActionError` for locked folders unless `confirmed`), `get`, `list_open(actor=)`, `write(id, offset, data, actor=)` (per-upload `threading.Lock`; offset must equal `received`; truncates a longer temp file; `pwrite` + `fsync`), `finish(id, actor=, name=)` (runs `file.upload` with `confirmed or info.confirmed`), `cancel`, `expire()`; `UploadInfo` (`path`, `temp`, `as_dict`), errors `UploadNotFound`, `UploadConflict(suggestion)`, `OffsetMismatch(offset)` (all `ActionRefused`); `FREE_SPACE_MARGIN` 64 MiB |
@@ -907,6 +928,14 @@ steps, log). Read them first if present. A maintainer-only design document
   `max_age_before_migrate_hours` 24).
 - Excluded files: scanner records them without hashing (`_excluded_file`, hash cleared);
   `Eligibility` gives excluded folders/files no stages.
+- Content scan (ADR 0029): `Context.write_text` calls `core/privacy/secrets.py`
+  `find_secret` when `scan_text` is set (the handler sets it if any copy is outside
+  `content_scan_ignore`) and raises `SecretFound`, before storing. `_stage_handler` catches
+  it: `_hold_back` sets `excluded` overrides with actor `rule:secret-scan:<kind>`
+  (`SCAN_ACTOR`, read back by `held_back`), queues a path scan and deletes the blob, which
+  cascades. Modules don't see any of this; the stage just stops. The scanner clears such an
+  override when the file differs from its row. `find_secret` never returns the value: keep
+  it that way, the kind goes in actors, events and logs.
 - Executor decisions: sensitive = type flag or any path in a locked folder; sensitive
   without `confirmed` → `SensitiveActionError` (UI/API then call
   `require_recent_auth` and retry with `confirmed=True`; CLI is trusted). Actions run
@@ -1117,11 +1146,14 @@ steps, log). Read them first if present. A maintainer-only design document
   reads `-` fully into memory). Real exiftool isn't on the dev machine or in CI: tests
   use `tests/photos_support.py`; real runs happen in the image (sandbox, see the handoff).
 - `photos.caption` has no `exif` input (the plan's table had one): Pillow applies the
-  orientation. HEIC/RAW: EXIF only (no decoder). Images get a `documents.chunk` run
+  orientation. RAW (`raw.py`, ADR 0030): one exiftool run gives `PreviewImage`,
+  `JpgFromRaw`, `OtherImage` as `base64:` JSON values plus `Orientation`, which
+  `images.prepare(orientation=)` applies unless the preview has its own. `images.VERSION`
+  wasn't raised for this, on purpose. HEIC: EXIF only (no decoder). Images get a `documents.chunk` run
   everywhere (skipped "no text" when nothing wrote text); `media` keeps `chunk`.
 - `RoleConfig.reasoning` → `reasoning_effort` in `Gateway.call` (not in the model key).
   Thinking models with the default spend `max_tokens` on reasoning and answer nothing.
-- Not yet: `ImageSearch` (waits for a consumer), HEIC/RAW descriptions, properties in
+- Not yet: `ImageSearch` (waits for a consumer), HEIC descriptions, properties in
   `/api/v1/files/{id}`.
 
 ### XMP sidecars (implemented; ADR 0026)
@@ -1339,7 +1371,7 @@ uv run steward models list | models probe [ROLE]     # model roles; test the map
 uv run steward tags list | import F | export | bootstrap | add|remove LIB:PATH TAG | retag [--all]
 uv run steward reindex [--yes] [--no-backup] | reindex --status   # rebuild index.db
 uv run steward eval [ROLE] [--baseline] [--history] [--verbose]   # score a role's model
-uv run steward journal list | journal undo ID | files sensitivity LIB:PATH LEVEL
+uv run steward journal list | journal undo ID | files sensitivity LIB:PATH LEVEL | files held-back
 uv run steward backup | export --output F            # backups (also nightly + before migrations)
 make check                      # lint typecheck imports test headers licenses
 make format                     # ruff format + ruff check --fix

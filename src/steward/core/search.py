@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from steward.core import reindex
 from steward.core.db import Databases
 from steward.core.embeddings import VectorQuery, load_vec
 from steward.core.folders.paths import FolderRef, PathError
@@ -154,6 +155,8 @@ class SearchResults:
     semantic: bool | None = None
     """Whether searching by meaning was part of it: None when it isn't set up (or the
     mode has no text), False when the model couldn't be reached."""
+    rebuilding: bool = False
+    """The index is being rebuilt, so files are missing from these results."""
 
 
 def fold(text: str | None) -> str | None:
@@ -846,6 +849,34 @@ def search_all(
     offset: int = 0,
     mode: Mode = "all",
     embed: Embed | None = None,
+) -> SearchResults:
+    """`_search_all`'s results, saying whether the index is complete."""
+    found = _search_all(
+        dbs,
+        policy,
+        query,
+        filters=filters,
+        scope=scope,
+        limit=limit,
+        offset=offset,
+        mode=mode,
+        embed=embed,
+    )
+    with dbs.state.read() as conn:
+        return dataclasses.replace(found, rebuilding=reindex.rebuilding(conn))
+
+
+def _search_all(
+    dbs: Databases,
+    policy: Policy,
+    query: str,
+    *,
+    filters: SearchFilters,
+    scope: Scope,
+    limit: int,
+    offset: int,
+    mode: Mode,
+    embed: Embed | None,
 ) -> SearchResults:
     """Names, words in the text and (with `embed`) meaning, merged by reciprocal rank
     fusion: each file once, text hits keep their snippet. `mode` `names` searches names

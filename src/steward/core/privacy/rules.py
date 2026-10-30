@@ -61,17 +61,25 @@ class PrivacyRules:
 
     secret_patterns: tuple[str, ...]
     rules: tuple[tuple[str, Sensitivity], ...] = ()
+    content_scan: bool = True
+    content_scan_ignore: tuple[str, ...] = ()
 
     @classmethod
     def from_config(cls, config: PrivacyConfig) -> PrivacyRules:
         return cls(
             secret_patterns=(*config.secret_patterns, *config.extra_secret_patterns),
             rules=tuple((r.pattern, r.sensitivity) for r in config.rules),
+            content_scan=config.content_scan,
+            content_scan_ignore=config.content_scan_ignore,
         )
 
     @classmethod
     def default(cls) -> PrivacyRules:
         return cls.from_config(PrivacyConfig(config_version=1))
+
+    def scans_content(self, relpath: str) -> bool:
+        """Whether text from `relpath` is looked through for credentials."""
+        return self.content_scan and not any(matches(relpath, p) for p in self.content_scan_ignore)
 
     def is_secret(self, relpath: str) -> bool:
         return any(matches(relpath, p) for p in self.secret_patterns)

@@ -7,11 +7,12 @@ Stages:
   folders): the exiftool program reads the date taken, camera, lens, size,
   orientation, GPS position and duration. Registered only when `exiftool` is found;
   the health check `photos.exif` says when it isn't (installing it later back-fills).
-- `photos.caption` (`mime` → `text:caption`; JPEG, PNG, WebP, GIF, TIFF, BMP): Pillow
-  scales the image down in an isolated child process and the model mapped to the
-  `caption` role (a vision model) describes it. `documents.chunk` chunks the
-  description, so photos are found by words and by meaning like documents. Without a
-  model mapped to `caption` the stage doesn't run.
+- `photos.caption` (`mime` → `text:caption`; JPEG, PNG, WebP, GIF, TIFF, BMP, and RAW
+  files by the JPEG embedded in them, which takes exiftool): Pillow scales the image down
+  in an isolated child process and the model mapped to the `caption` role (a vision
+  model) describes it. `documents.chunk` chunks the description, so photos are found by
+  words and by meaning like documents. Without a model mapped to `caption` the stage
+  doesn't run.
 
 Job `photos.sidecars` (`executor` lane, every 15 minutes) writes tags and descriptions to
 XMP sidecars with the action `photos.sidecar_sync`, for photos in folders whose type has
@@ -24,14 +25,15 @@ Built only on `steward.sdk`. Originals are never changed.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import BinaryIO, ClassVar, cast
 
 from pydantic import Field
 
-from steward.modules.photos import caption, exif, images, scoring, sidecars
+from steward.modules.photos import caption, exif, images, raw, scoring, sidecars
 from steward.sdk import (
     BlobInfo,
     Every,
@@ -63,6 +65,7 @@ SKIP_REASONS = {
     "ExifTimedOut": "timed out",
     "TooSmall": "too small",
     "TooManyPixels": "too many pixels",
+    "NoPreview": "no usable preview in the RAW file",
     "UnidentifiedImageError": "not a readable image",
 }
 ISOLATION_REASONS = {
@@ -81,6 +84,8 @@ class PhotosConfig(ModuleConfig):
     exif_memory_mib: int = Field(512, ge=128, le=8192)
     captions: bool = True
     """Describe photos with the model mapped to the `caption` role."""
+    raw_previews: bool = True
+    """Describe RAW photos from the JPEG preview inside them (needs `exiftool`)."""
     caption_max_file_mib: int = Field(100, ge=1, le=10_000)
     """Larger images aren't described."""
     caption_min_side: int = Field(256, ge=16, le=4096)
@@ -207,16 +212,30 @@ class PhotosModule:
         )
         max_bytes = config.caption_max_file_mib * MIB
 
+        previews = config.raw_previews and exiftool is not None
+
         def caption_applies(blob: BlobInfo, file: FileInfo, folder: FolderInfo) -> bool:
-            return blob.mime in images.MIME_TYPES and blob.size <= max_bytes
+            readable = blob.mime in images.MIME_TYPES or (previews and blob.mime in raw.MIME_TYPES)
+            return readable and blob.size <= max_bytes
 
         def run_caption(ctx: StageContext) -> StageResult:
-            fn = partial(
-                images.prepare,
-                max_side=config.caption_max_side,
-                min_side=config.caption_min_side,
-                max_pixels=config.caption_max_megapixels * 1_000_000,
-            )
+            max_side = config.caption_max_side
+            min_side = config.caption_min_side
+            max_pixels = config.caption_max_megapixels * 1_000_000
+            fn: Callable[[BinaryIO], bytes]
+            if ctx.blob.mime in raw.MIME_TYPES:
+                fn = partial(
+                    raw.prepare,
+                    command=cast(str, exiftool),
+                    timeout_s=config.caption_timeout_s * 0.9,
+                    max_side=max_side,
+                    min_side=min_side,
+                    max_pixels=max_pixels,
+                )
+            else:
+                fn = partial(
+                    images.prepare, max_side=max_side, min_side=min_side, max_pixels=max_pixels
+                )
             try:
                 jpeg = ctx.run_isolated(
                     fn, timeout_s=config.caption_timeout_s, memory_mib=config.caption_memory_mib

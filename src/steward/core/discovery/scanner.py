@@ -61,7 +61,7 @@ from steward.core.discovery.hashing import (
 from steward.core.folders import FolderError, FolderRef, Policy, is_within, load_policy
 from steward.core.folders import store as folder_store
 from steward.core.folders.policy import EffectiveSettings
-from steward.core.privacy import PrivacyRules, load_overrides
+from steward.core.privacy import SCAN_ACTOR, PrivacyRules, held_back, load_overrides, set_override
 
 log = logging.getLogger(__name__)
 
@@ -141,6 +141,7 @@ class Scanner:
         self._renewed = time.monotonic()
         self._settings_cache: dict[str, EffectiveSettings] = {}
         self._overrides: Mapping[str, str] = {}
+        self._held_back: Mapping[str, str] = {}
         self._last_error: str | None = None
 
     # --- entry point ------------------------------------------------------------
@@ -156,6 +157,7 @@ class Scanner:
         self._settings_cache = {}
         with self.dbs.state.read() as conn:
             self._overrides = load_overrides(conn)
+            self._held_back = held_back(conn)
         report = ScanReport()
         # Paths that exist go first, so a move's destination claims the identity before
         # its source is marked missing.
@@ -401,6 +403,11 @@ class Scanner:
         for relpath, disk in sorted(walk.files.items()):
             row = rows.get(relpath)
             override = self._overrides.get(row.file_id) if row is not None else None
+            if row is not None and row.file_id in self._held_back and not _same(row, disk):
+                # Edited since the content scan held it back: read it again.
+                with self.dbs.state.write() as conn:
+                    set_override(conn, row.file_id, None, actor=SCAN_ACTOR)
+                override = None
             if disk.excluded or override == "excluded":
                 if row is not None and row.present and _same(row, disk) and not row.content_hash:
                     unchanged.append(row.file_id)

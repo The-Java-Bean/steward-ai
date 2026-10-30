@@ -30,6 +30,7 @@
 {% if results is not none %}
 <h2>{{ results.total }}{% if results.capped %}+{% endif %} found</h2>
 {% if results.semantic is false %}<p class="hint">The embedding model can't be reached right now, so this searched by words only.</p>{% endif %}
+{% if results.rebuilding %}<p class="hint">The index is being rebuilt, so some files are missing from these results until it's done.</p>{% endif %}
 {% if results.hits %}
 <table>
   <thead><tr><th>Name</th><th>Folder</th><th>Kind</th><th>Size</th><th>Modified</th></tr></thead>

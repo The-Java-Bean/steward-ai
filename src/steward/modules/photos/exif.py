@@ -59,7 +59,7 @@ class ExifTimedOut(Exception):
     """exiftool took longer than its time limit (it was stopped)."""
 
 
-def _env() -> dict[str, str]:
+def environment() -> dict[str, str]:
     return {"LC_ALL": "C", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
@@ -74,7 +74,7 @@ def read_metadata(file: BinaryIO, *, command: str, timeout_s: float) -> dict[str
             stdin=file,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            env=_env(),
+            env=environment(),
             timeout=timeout_s,
             check=False,
         )

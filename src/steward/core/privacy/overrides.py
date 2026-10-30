@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jordan Hosler
-"""Per-file sensitivity overrides (`file_sensitivity`): raise one file above its folder."""
+"""Per-file sensitivity overrides (`file_sensitivity`): raise one file above its folder.
+
+Overrides come from you, or from the content scan (actor `rule:secret-scan:<kind>`), which
+holds back a file found to contain a credential (docs/adr/0029).
+"""
 
 from __future__ import annotations
 
@@ -15,10 +19,21 @@ from steward.core.db.schema import file_sensitivity, files
 from steward.core.db.types import utcnow
 
 Override = Literal["local-only", "excluded"]
+SCAN_ACTOR = "rule:secret-scan"
 
 
 class UnknownFileError(LookupError):
     pass
+
+
+def held_back(conn: Connection) -> dict[str, str]:
+    """Files the content scan holds back: `file_id` → the kind of credential found."""
+    rows = conn.execute(
+        select(file_sensitivity.c.file_id, file_sensitivity.c.actor).where(
+            file_sensitivity.c.actor.like(f"{SCAN_ACTOR}:%")
+        )
+    )
+    return {r.file_id: r.actor.removeprefix(f"{SCAN_ACTOR}:") for r in rows}
 
 
 def set_override(

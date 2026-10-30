@@ -270,6 +270,7 @@ def search(
             "total": results.total,
             "capped": results.capped,
             "semantic": results.semantic,
+            "rebuilding": results.rebuilding,
             "hits": [h.as_dict() for h in results.hits],
         }
     )

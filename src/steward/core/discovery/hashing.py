@@ -12,6 +12,7 @@ full hash either way, so their hashes match copies elsewhere.
 
 from __future__ import annotations
 
+import codecs
 import mimetypes
 import time
 from dataclasses import dataclass
@@ -136,8 +137,14 @@ _EXTRA_TYPES = {
     ".flac": "audio/flac",
     ".dng": "image/x-adobe-dng",
     ".cr2": "image/x-canon-cr2",
+    ".cr3": "image/x-canon-cr3",
     ".nef": "image/x-nikon-nef",
     ".arw": "image/x-sony-arw",
+    ".raf": "image/x-fuji-raf",
+    ".orf": "image/x-olympus-orf",
+    ".rw2": "image/x-panasonic-rw2",
+    ".pef": "image/x-pentax-pef",
+    ".srw": "image/x-samsung-srw",
 }
 
 # Magic numbers for files whose name doesn't say what they are.
@@ -182,10 +189,12 @@ ARCHIVE_TYPES = frozenset(
     }
 )
 TEXT_LIKE = frozenset({"application/json", "application/yaml", "application/xml"})
+_CONTROL_BYTES = bytes(b for b in range(32) if b not in b"\t\n\f\r\x1b")
 
 
 def detect_mime(name: str, head: bytes) -> str:
-    """By file extension, else by magic number, else `application/octet-stream`."""
+    """By file extension, else by magic number, else `text/plain` for what reads as text,
+    else `application/octet-stream`."""
     suffix = Path(name).suffix.lower()
     if suffix in _EXTRA_TYPES:
         return _EXTRA_TYPES[suffix]
@@ -199,10 +208,27 @@ def detect_mime(name: str, head: bytes) -> str:
         brand = head[8:12]
         if brand in (b"heic", b"heix", b"mif1", b"msf1"):
             return "image/heic"
+        if brand == b"crx ":
+            return "image/x-canon-cr3"
         return "video/quicktime" if brand == b"qt  " else "video/mp4"
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp"
+    if ".log" not in (s.lower() for s in Path(name).suffixes) and _reads_as_text(head):
+        return "text/plain"
     return "application/octet-stream"
+
+
+def _reads_as_text(head: bytes) -> bool:
+    """Whether the start of a file is UTF-8 text (it may end in the middle of a character).
+    Code in any language passes; logs are kept out by the caller, being noisy and often
+    holding tokens."""
+    if not head or head.translate(None, delete=_CONTROL_BYTES) != head:
+        return False
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(head)
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def kind_of(mime: str) -> str:

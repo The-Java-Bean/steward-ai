@@ -31,7 +31,7 @@ from steward.core.discovery.jobs import enqueue_full_scan
 from steward.core.folders import FolderRef, load_policy, store
 from steward.core.privacy import set_override
 from steward.core.runtime import Runtime, build_runtime
-from steward.core.search import search_all
+from steward.core.search import SearchResults, search_all
 from steward.core.worker import Worker
 from steward.modules.documents import DocumentsModule
 from steward.sdk import JobContext, PermanentJobError
@@ -283,6 +283,20 @@ def test_the_job_rebuilds_and_the_mark_goes_away(env: Env) -> None:
     with env.runtime.dbs.state.read() as conn:
         statuses = conn.execute(select(jobs.c.status).where(jobs.c.lane != "executor")).scalars()
         assert set(statuses) <= {"done"}
+
+
+def test_search_says_when_files_are_missing_because_of_a_rebuild(env: Env) -> None:
+    def results() -> SearchResults:
+        with env.runtime.dbs.state.read() as conn:
+            policy = load_policy(conn)
+        return search_all(env.runtime.dbs, policy, "plain")
+
+    assert not results().rebuilding
+    with env.runtime.dbs.state.write() as conn:
+        reindex.request(conn, actor="test")
+    assert results().rebuilding
+    Worker(env.runtime).drain()
+    assert not results().rebuilding
 
 
 def test_a_scan_already_running_doesnt_stand_in_for_the_rebuilds_own(env: Env) -> None:

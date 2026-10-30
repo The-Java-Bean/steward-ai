@@ -9,6 +9,12 @@ extra_secret_patterns:
   - "*.ovpn"
   - "secrets/**"
 
+# Text is also looked through for credentials before it's stored. A file that holds one
+# becomes `excluded`, and what was derived from it is deleted. List false positives here.
+content_scan: true
+content_scan_ignore:
+  - "docs/examples/**"
+
 # Patterns without `/` match file names anywhere (`*.pdf`); with `/` they match the path
 # inside the library (`taxes/**`, `**/medical/*.pdf`); a leading `/` anchors at the
 # library root. Matching ignores case.

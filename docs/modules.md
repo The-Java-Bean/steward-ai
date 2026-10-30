@@ -213,7 +213,9 @@ def register(r: Registry) -> None:
 ### The content index
 
 Text and chunks go into core tables through the context, so every module's output is
-searched the same way (`/ui/search`, `/api/v1/search`, the Locked Folder search):
+searched the same way (`/ui/search`, `/api/v1/search`, the Locked Folder search). `write_text`
+also looks through the text for credentials: if it finds one, the stage stops there and the
+core holds the file back (ADR 0029), so don't catch broad exceptions around it:
 
 ```python
 from steward.sdk import ChunkPart, StageContext, TextPart

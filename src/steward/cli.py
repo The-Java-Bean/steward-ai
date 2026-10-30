@@ -48,7 +48,7 @@ from steward.core.folders import (
 from steward.core.folders import store as folder_store
 from steward.core.folders.seed import import_seed
 from steward.core.loader import ModuleLoadError, discover, is_builtin
-from steward.core.privacy import PrivacyRules, set_override
+from steward.core.privacy import PrivacyRules, held_back, set_override
 from steward.core.runtime import Runtime, build_runtime
 from steward.core.search import Mode, SearchError, SearchFilters, search_all, tag_counts
 from steward.core.stages import rerun
@@ -656,7 +656,12 @@ def files_info(
         _fail(f"{path} isn't a known file (run `steward scan` first?)")
     typer.echo(f"{path}\n  file id {row.file_id}  {row.size} B")
     if row.content_hash is None:
-        typer.echo("  not hashed (pending, unreadable or excluded)")
+        with runtime.dbs.state.read() as conn:
+            rule = held_back(conn).get(row.file_id)
+        if rule:
+            typer.echo(f"  held back: its text looks like it holds a credential ({rule})")
+        else:
+            typer.echo("  not hashed (pending, unreadable or excluded)")
         return
     with runtime.dbs.index.read() as conn:
         blob = conn.execute(
@@ -1044,6 +1049,25 @@ def tokens_revoke(token_id: int) -> None:
 # --- privacy, search, journal, backups -----------------------------------------------
 
 
+@files_app.command("held-back")
+def files_held_back() -> None:
+    """Files kept out of the index because their text looks like it holds a credential.
+    Fix the file and it's read again; for a false positive, add it to
+    `content_scan_ignore` in privacy.yaml, then `steward files sensitivity <file> clear`."""
+    runtime = _ready_runtime()
+    with runtime.dbs.state.read() as conn:
+        found = held_back(conn)
+        rows = conn.execute(
+            select(files_table.c.file_id, files_table.c.library_id, files_table.c.relpath)
+            .where(files_table.c.file_id.in_(found), files_table.c.present.is_(True))
+            .order_by(files_table.c.library_id, files_table.c.relpath)
+        ).all()
+    for row in rows:
+        typer.echo(f"{row.library_id}:{row.relpath}  ({found[row.file_id]})")
+    if not rows:
+        typer.echo("no files are held back")
+
+
 @files_app.command("sensitivity")
 def files_sensitivity(
     path: Annotated[str, typer.Argument(help="library:path/to/file")],
@@ -1107,6 +1131,8 @@ def search(
         _fail(str(exc))
     if results.semantic is False:
         typer.echo("(the embedding model can't be reached: searched by words only)", err=True)
+    if results.rebuilding:
+        typer.echo("(the index is being rebuilt: some files are missing from this)", err=True)
     for hit in results.hits:
         meaning = "  [by meaning]" if hit.semantic else ""
         typer.echo(f"{hit.library_id}:{hit.relpath}  {hit.size} B  {hit.kind or '-'}{meaning}")

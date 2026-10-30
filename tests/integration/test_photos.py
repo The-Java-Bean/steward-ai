@@ -9,6 +9,7 @@ back-fill when one is mapped, and the file page's details."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -331,6 +332,51 @@ def test_small_images_are_skipped_without_a_model_call(env: Env, server: FakeMod
     assert run.status == "skipped"
     assert run.error == "too small"
     assert len(server.chats()) == 3  # beach, barn, the locked one; not the icon
+
+
+def add_raw(env: Env, record: dict[str, Any], name: str = "shot.cr3") -> str:
+    relpath = f"{env.spec['media']}/{name}"
+    (env.root / relpath).write_bytes(b"EXIF:" + json.dumps(record).encode() + b"\n")
+    env.paths[name] = relpath
+    Scanner(env.runtime.dbs, DiscoverySettings()).scan("lib")
+    env.drain()
+    return name
+
+
+def preview(color: tuple[int, int, int]) -> str:
+    return "base64:" + base64.b64encode(make_jpeg(color=color)).decode()
+
+
+def test_raw_photos_are_described_from_their_preview(env: Env) -> None:
+    key = add_raw(env, {"EXIF:Model": "Canon EOS R5", "PreviewImage": preview((200, 60, 20))})
+    assert env.caption(key) == CAPTIONS[(200, 60, 20)]
+    assert env.run_of(key, CAPTION_STAGE).status == "done"
+    assert env.names("barn snowy field").count(key) == 1
+    assert env.props(key)["camera"]
+
+
+def test_a_raw_file_without_a_preview_is_skipped_with_the_reason(env: Env) -> None:
+    key = add_raw(env, {"EXIF:Model": "Phone"})
+    run = env.run_of(key, CAPTION_STAGE)
+    assert (run.status, run.error) == ("skipped", "no usable preview in the RAW file")
+
+
+def test_raw_previews_can_be_turned_off(tmp_path: Path, server: FakeModelServer) -> None:
+    env = Env(tmp_path, "flat", server, raw_previews=False)
+    try:
+        key = add_raw(env, {"PreviewImage": preview((200, 60, 20))})
+        assert env.run_of(key, CAPTION_STAGE) is None
+    finally:
+        env.runtime.close()
+
+
+def test_raw_previews_need_exiftool(tmp_path: Path, server: FakeModelServer) -> None:
+    env = Env(tmp_path, "flat", server, exiftool=False)
+    try:
+        key = add_raw(env, {"PreviewImage": preview((200, 60, 20))})
+        assert env.run_of(key, CAPTION_STAGE) is None
+    finally:
+        env.runtime.close()
 
 
 def test_videos_and_non_images_get_no_caption(env: Env) -> None:

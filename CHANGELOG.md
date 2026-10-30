@@ -6,7 +6,24 @@ All notable changes to steward-ai are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Files with an unknown extension that read as UTF-8 text are `text/plain`, so they're
+  extracted and searchable (TypeScript, SCSS and other code); `.log` files aren't. After
+  upgrading, `steward reindex` reclassifies existing files (ADR 0030).
+
+### Fixed
+- `.cr3` files were treated as video.
+
 ### Added
+- Credentials in file contents: text is looked through before it's stored, and a file that
+  holds a private key, token or password becomes `excluded`, with everything derived from
+  it deleted. Editing the file reads it again; `content_scan_ignore` in `privacy.yaml` is
+  for false positives, `content_scan: false` turns it off. `steward files held-back`,
+  health check `core.secrets` (ADR 0029).
+- RAW photos (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF, SRW) get a description, and so
+  tags, from the JPEG preview inside them. Module setting `raw_previews` (ADR 0030).
+- Search says when the index is being rebuilt, so results are incomplete: a notice on the
+  search pages, `rebuilding` in `/api/v1/search`, a line from `steward search`.
 - `steward reindex` rebuilds `index.db` from the libraries with the API and worker running
   (`--status`, `--yes`, `--no-backup`), after a `pre-reindex` backup. A full scan now also
   repairs a lost or older `index.db`, and a worker that finds the index gone starts a

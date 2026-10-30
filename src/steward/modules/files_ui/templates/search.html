@@ -11,6 +11,7 @@
 </form>
 {% if found is not none %}
 <p class="hint">{{ found.total }}{% if found.capped %}+{% endif %} files found in locked folders. Only files steward-ai has already scanned are found.</p>
+{% if found.rebuilding %}<p class="hint">The index is being rebuilt, so some files are missing from these results until it's done.</p>{% endif %}
 {% include "files_ui/_found.html" %}
 <p>
   {% if page > 1 %}<a href="{{ base }}/search?q={{ q|urlencode }}&amp;page={{ page - 1 }}">Previous</a>{% endif %}

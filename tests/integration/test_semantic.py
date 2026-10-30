@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 from support import make_runtime, use_fast_hashes
 
 from steward.api import create_app
-from steward.core import embeddings, stages
+from steward.core import embeddings, reindex, stages
 from steward.core.config import DiscoverySettings
 from steward.core.db import utcnow
 from steward.core.db.schema import chunks, embedding_spaces, files, jobs, stage_runs
@@ -402,6 +402,12 @@ def test_search_pages_mark_results_found_by_meaning(
     assert page.status_code == 200
     assert "invoice.txt" in page.text
     assert '<span class="related">related</span>' in page.text
+    assert "being rebuilt" not in page.text
     data = client.get("/api/v1/search", params={"q": "plumber bill"}).json()
     assert data["semantic"] is True
+    assert data["rebuilding"] is False
     assert [(h["name"], h["semantic"]) for h in data["hits"]] == [("invoice.txt", True)]
+    with env.runtime.dbs.state.write() as conn:
+        reindex.request(conn, actor="test")
+    assert "being rebuilt" in client.get("/ui/search", params={"q": "plumber bill"}).text
+    assert client.get("/api/v1/search", params={"q": "bill"}).json()["rebuilding"] is True

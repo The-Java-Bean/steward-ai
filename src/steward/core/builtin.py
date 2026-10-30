@@ -18,6 +18,7 @@ from steward.core.db import Databases, utcnow
 from steward.core.db.migrate import CORE_VERSIONS
 from steward.core.discovery.jobs import register_discovery
 from steward.core.executor import register_actions
+from steward.core.privacy import held_back
 from steward.core.stages import register_hash_stage
 from steward.core.tags.actions import register_tag_actions
 from steward.sdk import (
@@ -202,9 +203,22 @@ def register_models(registrations: Registrations, runtime: Callable[[], Runtime]
             return HealthResult("warn", f"{counts}; the next full scan restores the rest")
         return HealthResult("ok", counts)
 
+    async def secrets() -> HealthResult:
+        rt = runtime()
+        with rt.dbs.state.read() as conn:
+            count = len(held_back(conn))
+        if count:
+            return HealthResult(
+                "warn",
+                f"{count} file(s) kept out of the index: their text looks like it holds a "
+                "credential (`steward files held-back`)",
+            )
+        return HealthResult("ok", "no credentials found in file contents")
+
     r.health_check("core.models", models)
     r.health_check("core.embeddings", spaces)
     r.health_check("core.index", index)
+    r.health_check("core.secrets", secrets)
 
 
 RETAG_SUBSCRIBER = "core.tags.retag_untagged"
