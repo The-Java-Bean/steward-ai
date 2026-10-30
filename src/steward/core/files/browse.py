@@ -40,7 +40,7 @@ from steward.core.folders.policy import FolderMapping, Policy
 from steward.core.privacy.sharing import SharingRules
 from steward.core.search import Embed, SearchError, SearchFilters, Visibility, search_all
 from steward.core.tags import effective
-from steward.sdk import ActionRefused
+from steward.sdk import SIDECAR_SUFFIX, ActionRefused, is_sidecar
 from steward.sdk.web import (
     Crumb,
     Entry,
@@ -81,6 +81,8 @@ class SharedArea:
             return False
         if self.allowed is not None and relpath not in self.allowed:
             return False
+        if is_sidecar(relpath):
+            return False  # they hold AI tags and descriptions the owner didn't choose to share
         return self.sharing.check(library_id, relpath).shareable
 
 
@@ -226,6 +228,12 @@ class Browser:
                     truncated = True
                     break
                 raw.append((item.name, st))
+        names = {name for name, _ in raw}
+        raw = [
+            (name, st)
+            for name, st in raw
+            if not (is_sidecar(name) and name[: -len(SIDECAR_SUFFIX)] in names)
+        ]
         known = self._known(where.library_id, [_join(where.relpath, n) for n, _ in raw])
         entries = [
             self._entry(where.library_id, _join(where.relpath, name), st, known, scope)

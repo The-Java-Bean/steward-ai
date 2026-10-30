@@ -72,6 +72,8 @@ def folder_info(settings: EffectiveSettings) -> FolderInfo:
         fields=settings.fields,
         default_tags=settings.default_tags,
         stages_added=settings.stages_add,
+        writable=settings.writable,
+        sidecars=settings.sidecars,
     )
 
 

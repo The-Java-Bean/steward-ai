@@ -31,5 +31,6 @@ a later record supersedes an earlier one and both say so.
 | [0023](0023-model-roles-and-semantic-search.md) | Model roles for stages, embedding spaces and hybrid search | Accepted |
 | [0024](0024-photos-and-properties.md) | Photos: EXIF with exiftool, captions from a vision role, properties in the content index | Accepted |
 | [0025](0025-fields-and-tags.md) | Fields as properties, tags as core storage | Accepted |
+| [0026](0026-xmp-sidecars.md) | XMP sidecars: drafts outside the write lock, three-way merge, sidecars follow files | Accepted |
 
 New record: copy [`template.md`](template.md) to the next number, and add it to this table.

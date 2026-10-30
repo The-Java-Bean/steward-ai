@@ -61,6 +61,8 @@ class TypeSettings(BaseModel):
     """Whether triage may propose moving files here."""
     visible: bool | None = None
     """Shown in the file manager (`ignored` folders aren't)."""
+    sidecars: bool | None = None
+    """Write XMP sidecars for photos here (the folder must be writable, and not locked)."""
     default_tags: tuple[str, ...] | None = None
     fields: tuple[str, ...] | None = None
     """Extra structured fields to extract, e.g. `vendor`, `amount`."""
@@ -93,6 +95,7 @@ class ResolvedType:
     shareable: bool
     triage_target: bool
     visible: bool
+    sidecars: bool
     default_tags: tuple[str, ...]
     fields: tuple[str, ...]
     ignore: tuple[str, ...]
@@ -109,6 +112,7 @@ GENERAL = TypeSettings(
     shareable=True,
     triage_target=True,
     visible=True,
+    sidecars=False,
     default_tags=(),
     fields=(),
     ignore=(),
@@ -126,6 +130,7 @@ BUILTIN_TYPES: dict[str, TypeSettings] = {
     "media": TypeSettings(
         description="Photos and videos.",
         stages=StageChanges(add=("exif", "caption"), remove=("extract", "ocr")),
+        sidecars=True,
     ),
     "notes": TypeSettings(
         description="Notes, mostly Markdown with frontmatter.",
@@ -267,6 +272,7 @@ _SCALARS = (
     "shareable",
     "triage_target",
     "visible",
+    "sidecars",
     "default_tags",
     "fields",
     "ignore",

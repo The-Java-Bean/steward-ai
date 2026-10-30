@@ -127,6 +127,7 @@ _EXTRA_TYPES = {
     ".heif": "image/heif",
     ".webp": "image/webp",
     ".avif": "image/avif",
+    ".xmp": "application/rdf+xml",  # sidecars: metadata, not a document to index
     ".yaml": "application/yaml",
     ".yml": "application/yaml",
     ".epub": "application/epub+zip",

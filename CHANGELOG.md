@@ -6,7 +6,20 @@ All notable changes to steward-ai are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- XMP sidecars: the `photos` module writes tags and descriptions to `<photo>.xmp` for
+  photos in folders whose type has the new `sidecars` setting (on for `media`), merging
+  with what other programs wrote (needs exiftool; `sidecars: false` turns it off). Job
+  `photos.sidecars` (every 15 minutes), action `photos.sidecar_sync` (ADR 0026).
+- SDK: `JobContext.library` (`LibraryAccess`) and, on the `executor` lane,
+  `JobContext.actions` (`ActionRunner`); `FolderInfo.writable`, `FolderInfo.sidecars`;
+  `SIDECAR_SUFFIX`, `is_sidecar`.
+
 ### Changed
+- `file.move`, `file.rename` and `file.delete` of a file take its `.xmp` sidecar along
+  (undo too); a sidecar already at the destination refuses the move.
+- `.xmp` files are `application/rdf+xml` (kind `other`), so they aren't indexed. A sidecar
+  next to its file isn't listed or found by name, and share links never serve sidecars.
 - `documents.chunk` also chunks an image's description (`text:caption`) after its own
   text, and applies to every image; the `media` folder type no longer removes `chunk`
   (it still removes `extract` and `ocr`).

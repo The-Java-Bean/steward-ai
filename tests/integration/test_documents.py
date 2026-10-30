@@ -280,10 +280,11 @@ def test_cli_files_text_and_search(tmp_path: Path) -> None:
 
     from steward.cli import app
     from steward.modules.files_ui import FilesUiModule
+    from steward.modules.photos import PhotosModule
     from steward.modules.shares import SharesModule
 
     # The CLI loads every installed built-in module, so their migrations must exist.
-    runtime = make_runtime(tmp_path, (DocumentsModule, FilesUiModule, SharesModule))
+    runtime = make_runtime(tmp_path, (DocumentsModule, FilesUiModule, PhotosModule, SharesModule))
     root = tmp_path / "lib"
     (root / "docs").mkdir(parents=True)
     (root / "docs/report.pdf").write_bytes(make_pdf(["Cover", "Revenue rose sharply"]))

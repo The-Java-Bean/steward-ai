@@ -121,6 +121,17 @@ class NotesModule:
         ...
 ```
 
+**Files and actions from a job.** `ctx.library` (`steward.sdk.library`) pages through files
+with their folder settings, effective tags and texts: `files(kind="image", after=, limit=,
+texts=("text:caption",))` returns a `LibraryPage`, and it never contains anything locked,
+hidden or excluded. `read(path, max_bytes=)` returns the content and its hash.
+`revision()` changes when anything may have changed, so a job that compares everything
+can skip a run. A job on the `executor` lane also gets `ctx.actions`:
+`ctx.actions.run("photos.sidecar_sync", params)` runs an action as `module:<name>`,
+journaled as usual; nobody confirmed a password, so sensitive actions and anything
+touching a locked folder are refused. On other lanes `ctx.actions` is None, because the
+worker can't write. Do slow work before calling it: actions run under the write lock.
+
 **Jobs** must be idempotent: after a crash, a job can run again. Lanes are `io`,
 `cpu`, `llm-local`, `llm-remote` and `events` (worker process) and `executor` (API
 process, the only writer). **Events** are delivered at least once, in no guaranteed

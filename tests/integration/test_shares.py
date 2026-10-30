@@ -238,6 +238,16 @@ def test_wrong_passwords_are_slowed_down(env: ShareEnv, visitor: TestClient) -> 
     assert limited.headers["retry-after"] == "900"
 
 
+def test_a_folder_link_never_serves_sidecars(env: ShareEnv, visitor: TestClient) -> None:
+    (env.root / "docs/photo.png.xmp").write_text("<x:xmpmeta>private tags</x:xmpmeta>")
+    env.scan()
+    share = env.create("lib:docs")
+    url = f"/s/{share.token}"
+    assert "photo.png.xmp" not in visitor.get(url).text
+    assert visitor.get(f"{url}/f", params={"path": "photo.png.xmp"}).status_code == 404
+    assert visitor.get(f"{url}/f/photo.png.xmp").status_code == 404
+
+
 def test_a_folder_link_leaves_out_what_may_not_be_shared(
     env: ShareEnv, visitor: TestClient
 ) -> None:

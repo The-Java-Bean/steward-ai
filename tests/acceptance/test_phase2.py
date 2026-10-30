@@ -42,9 +42,10 @@ from steward.core.folders import FolderRef, load_policy
 from steward.core.runtime import Runtime, build_runtime
 from steward.core.setup import SetupToken
 from steward.modules.files_ui import FilesUiModule
+from steward.modules.photos import PhotosModule
 from steward.modules.shares import SharesModule
 
-MODULES = (FilesUiModule, SharesModule)
+MODULES = (FilesUiModule, PhotosModule, SharesModule)
 CHUNK = 1024 * 1024  # uploads.chunk_mib: 1
 SECRET_NAME = "okapi"
 """In the name of every file inside the locked folder; never in a normal response."""

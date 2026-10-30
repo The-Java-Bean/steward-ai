@@ -76,6 +76,7 @@ class EffectiveSettings:
     shareable: bool
     triage_target: bool
     visible: bool
+    sidecars: bool
     default_tags: tuple[str, ...]
     fields: tuple[str, ...]
     ignore: tuple[str, ...]
@@ -175,6 +176,7 @@ class Policy:
             shareable=shareable,
             triage_target=triage_target,
             visible=visible,
+            sidecars=current.sidecars,
             default_tags=current.default_tags,
             fields=current.fields,
             ignore=current.ignore,

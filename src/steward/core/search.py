@@ -269,7 +269,7 @@ def _under(ref: FolderRef) -> tuple[str, list[Any]]:
 
 
 @contextmanager
-def _connect(dbs: Databases) -> Iterator[sqlite3.Connection]:
+def connect(dbs: Databases) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(f"file:{dbs.state.path}?mode=ro", uri=True, timeout=10)
     try:
         conn.execute("ATTACH DATABASE ? AS idx", (f"file:{dbs.index.path}?mode=ro",))
@@ -555,7 +555,7 @@ def parse_query(query: str, keys: frozenset[str] | set[str]) -> ParsedQuery:
 
 
 def property_keys(dbs: Databases) -> frozenset[str]:
-    with _connect(dbs) as conn:
+    with connect(dbs) as conn:
         return frozenset(r[0] for r in conn.execute(_KEYS))
 
 
@@ -576,7 +576,7 @@ def with_query_filters(
 
 def tag_counts(dbs: Databases, policy: Policy, *, scope: Scope = "normal") -> dict[str, int]:
     """Tag name -> how many files in `scope` have it (exactly that tag)."""
-    with _connect(dbs) as conn:
+    with connect(dbs) as conn:
         conditions = _conditions(conn, policy, SearchFilters(), scope)
         if conditions is None:
             return {}
@@ -654,12 +654,19 @@ def _count(conn: sqlite3.Connection, sql_from: str, args: Sequence[Any]) -> int:
 
 # --- names ---------------------------------------------------------------------------
 
+_NOT_A_SIDECAR = (
+    "NOT (lower(substr(f.relpath, -4)) = '.xmp' AND EXISTS (SELECT 1 FROM files p "
+    "WHERE p.library_id = f.library_id AND p.present = 1 "
+    "AND p.relpath = substr(f.relpath, 1, length(f.relpath) - 4)))"
+)
+"""A sidecar next to its photo isn't a search result of its own."""
+
 
 def _name_query(
     words: list[str], where: list[str], args: list[Any]
 ) -> tuple[str, list[Any], str, list[Any]]:
     """(FROM clause, its args, ORDER BY clause, its args) for a name search."""
-    where = [*where, *("instr(steward_fold(f.relpath), ?) > 0" for _ in words)]
+    where = [*where, _NOT_A_SIDECAR, *("instr(steward_fold(f.relpath), ?) > 0" for _ in words)]
     sql_from = (
         "FROM files f LEFT JOIN idx.blobs b ON b.content_hash = f.content_hash "
         f"WHERE {' AND '.join(where)}"
@@ -684,7 +691,7 @@ def search_files(
     query, filters = with_query_filters(dbs, query, filters)
     words = tokens(query)
     _check_limits(limit, offset)
-    with _connect(dbs) as conn:
+    with connect(dbs) as conn:
         conditions = _conditions(conn, policy, filters, scope)
         if conditions is None:
             return SearchResults([], 0, capped=False)
@@ -768,7 +775,7 @@ def search_text(
     _check_limits(limit, offset)
     if match is None:
         return SearchResults([], 0, capped=False)
-    with _connect(dbs) as conn:
+    with connect(dbs) as conn:
         conditions = _conditions(conn, policy, filters, scope)
         if conditions is None:
             return SearchResults([], 0, capped=False)
@@ -867,7 +874,7 @@ def search_all(
     if offset >= RANK_CAP:
         return SearchResults([], 0, capped=False, semantic=semantic)
     depth = min(offset + limit, RANK_CAP)
-    with _connect(dbs) as conn:
+    with connect(dbs) as conn:
         conditions = _conditions(conn, policy, filters, scope)
         if conditions is None:
             return SearchResults([], 0, capped=False, semantic=semantic)

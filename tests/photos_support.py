@@ -20,11 +20,60 @@ from typing import Any
 from PIL import Image
 
 _SCRIPT = """#!{python}
-import json, os, sys, time
+import json, os, re, sys, time
 here = os.path.dirname(os.path.abspath(__file__))
-data = sys.stdin.buffer.read()
+
+def load(name):
+    found = re.search(rb"<fake>(.*)</fake>", open(name, "rb").read(), re.S)
+    return json.loads(found.group(1)) if found else {{}}
+
+def dump(name, record):
+    body = json.dumps(record, sort_keys=True).encode()
+    with open(name, "wb") as out:
+        out.write(b'<?xpacket begin="" ?><x:xmpmeta><fake>' + body + b"</fake></x:xmpmeta>")
+
+def edit(name, args):
+    if b"NOEDIT" in open(name, "rb").read():
+        return
+    record = load(name)
+    for arg in args:
+        tag, op, value = re.match(r"-XMP-[a-z]+:(\\w+?)(\\+=|-=|=)(.*)", arg).groups()
+        if op == "=":
+            record[tag] = value or None
+            continue
+        values = record.setdefault(tag, [])
+        if value in values:
+            values.remove(value)
+        if op == "+=":
+            values.append(value)
+    dump(name, record)
+
+argv = sys.argv[1:]
 with open(os.path.join(here, "calls.jsonl"), "a") as log:
-    log.write(json.dumps({{"args": sys.argv[1:], "env": sorted(os.environ)}}) + "\\n")
+    log.write(json.dumps({{"args": argv, "env": sorted(os.environ)}}) + "\\n")
+if os.path.exists(os.path.join(here, "BROKEN")):
+    sys.exit(1)
+if "-@" in argv:
+    pending = []
+    for line in open(argv[argv.index("-@") + 1], encoding="utf-8").read().splitlines():
+        if line == "-execute":
+            edit(pending[-1], pending[:-1])
+            pending = []
+        else:
+            pending.append(line)
+    sys.exit(0)
+names = [a for a in argv if a.endswith(".xmp")]
+if names:
+    out = []
+    for name in names:
+        record = load(name)
+        kept = {{k: v for k, v in record.items() if v not in (None, [])}}
+        out.append({{"SourceFile": name, **kept}})
+        if b"UNREADABLE" in open(name, "rb").read():
+            out[-1]["Error"] = "bad"
+    print(json.dumps(out))
+    sys.exit(0)
+data = sys.stdin.buffer.read()
 if b"SLEEP" in data:
     time.sleep(60)
 if b"FAIL" in data:
@@ -43,6 +92,17 @@ def make_fake_exiftool(directory: Path) -> Path:
     path.write_text(_SCRIPT.format(python=sys.executable))
     path.chmod(0o755)
     return path
+
+
+def fake_sidecar(**record: Any) -> bytes:
+    """A sidecar as the fake exiftool keeps them: `Subject=[...]`, `Description="..."`..."""
+    body = json.dumps(record, sort_keys=True).encode()
+    return b'<?xpacket begin="" ?><x:xmpmeta><fake>' + body + b"</fake></x:xmpmeta>"
+
+
+def read_fake_sidecar(path: Path) -> dict[str, Any]:
+    data = path.read_bytes()
+    return dict(json.loads(data[data.index(b"<fake>") + 6 : data.index(b"</fake>")]))
 
 
 def exiftool_calls(fake: Path) -> list[dict[str, Any]]:

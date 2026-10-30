@@ -89,6 +89,9 @@ class FolderInfo:
     default_tags: tuple[str, ...]
     stages_added: frozenset[str] = frozenset()
     """Stage names the folder's type adds explicitly (full or short names, as written)."""
+    writable: bool = True
+    sidecars: bool = False
+    """The folder's type asks for XMP sidecars."""
 
     def adds(self, stage: str) -> bool:
         """Whether the folder's type adds `stage` (`documents.ocr`) explicitly, by its full

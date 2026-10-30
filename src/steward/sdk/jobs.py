@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 if TYPE_CHECKING:
+    from steward.sdk.library import ActionRunner, LibraryAccess
     from steward.sdk.state import StateAccess
 
 Lane = Literal["io", "cpu", "llm-local", "llm-remote", "events", "executor"]
@@ -46,6 +47,11 @@ class JobContext:
     """Call during long work to keep the job from being handed to another worker."""
     state: StateAccess = field(repr=False, compare=False)
     """`state.db`, for the module's own tables (see `steward.sdk.state`)."""
+    library: LibraryAccess | None = field(default=None, repr=False, compare=False)
+    """The files, their tags and texts (see `steward.sdk.library`)."""
+    actions: ActionRunner | None = field(default=None, repr=False, compare=False)
+    """Runs actions as the module. Only on the `executor` lane: elsewhere it's None,
+    because the worker has no write access to the libraries."""
 
 
 JobHandler = Callable[[JobContext], None]

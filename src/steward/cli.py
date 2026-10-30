@@ -405,6 +405,7 @@ def folders_show(folder: str) -> None:
     typer.echo(f"  shareable:     {settings.shareable}")
     typer.echo(f"  triage target: {settings.triage_target}")
     typer.echo(f"  visible:       {settings.visible}")
+    typer.echo(f"  sidecars:      {settings.sidecars}")
     if settings.stages_add or settings.stages_remove:
         typer.echo(
             f"  stages:        +{','.join(sorted(settings.stages_add)) or '-'} "
@@ -525,6 +526,7 @@ def types_show(name: str) -> None:
         "shareable",
         "triage_target",
         "visible",
+        "sidecars",
         "default_tags",
         "fields",
         "ignore",

@@ -6,7 +6,8 @@ Search filters and counts do the same in SQL (`core.search`)."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import cast
 
 from sqlalchemy import Connection
@@ -41,27 +42,26 @@ def resolve_names(rows: Iterable[store.Tag], names: Iterable[str]) -> list[int]:
     return found
 
 
-def file_tags(
-    state: Connection,
-    index: Connection,
-    policy: Policy,
-    *,
-    file_id: str,
-    content_hash: str | None,
-    library_id: str,
-    relpath: str,
+@dataclass(frozen=True, slots=True)
+class FileRef:
+    file_id: str
+    content_hash: str | None
+    library_id: str
+    relpath: str
+
+
+def _compose(
+    by_id: Mapping[int, store.Tag],
+    canon: Mapping[int, int],
+    rule_ids: Iterable[int],
+    suggested: Iterable[int],
+    decisions: Mapping[int, store.FileState],
 ) -> list[FileTag]:
-    """The file's tags, by name."""
-    rows = store.all_tags(state)
-    by_id = {t.tag_id: t for t in rows}
-    canon = store.canonical(rows)
-    decisions = store.file_rows(state, file_id)
     sources: dict[int, TagSource] = {}
-    if content_hash is not None:
-        for tag_id in store.suggestions(index, content_hash):
-            if tag_id in canon:
-                sources[canon[tag_id]] = "ai"
-    for tag_id in resolve_names(rows, rule_names(policy, library_id, relpath)):
+    for tag_id in suggested:
+        if tag_id in canon:
+            sources[canon[tag_id]] = "ai"
+    for tag_id in rule_ids:
         sources[tag_id] = "rule"
     for tag_id, state_ in decisions.items():
         if state_ == "added":
@@ -74,3 +74,44 @@ def file_tags(
         if t in by_id
     ]
     return sorted(found, key=lambda tag: key(tag.name))
+
+
+def file_tags(
+    state: Connection,
+    index: Connection,
+    policy: Policy,
+    *,
+    file_id: str,
+    content_hash: str | None,
+    library_id: str,
+    relpath: str,
+) -> list[FileTag]:
+    """The file's tags, by name."""
+    file = FileRef(file_id, content_hash, library_id, relpath)
+    return many(state, index, policy, [file])[file_id]
+
+
+def many(
+    state: Connection, index: Connection, policy: Policy, files: Sequence[FileRef]
+) -> dict[str, list[FileTag]]:
+    """Tags of many files (`file_id` -> tags), with one query per kind of row."""
+    rows = store.all_tags(state)
+    by_id = {t.tag_id: t for t in rows}
+    canon = store.canonical(rows)
+    decisions = store.file_rows_of(state, [f.file_id for f in files])
+    suggested = store.suggestions_of(index, [f.content_hash for f in files if f.content_hash])
+    rules: dict[tuple[str, str], list[int]] = {}
+    found = {}
+    for f in files:
+        where = (f.library_id, f.relpath.rsplit("/", 1)[0] if "/" in f.relpath else "")
+        if where not in rules:
+            rules[where] = resolve_names(rows, rule_names(policy, f.library_id, f.relpath))
+        rule_ids = rules[where]
+        found[f.file_id] = _compose(
+            by_id,
+            canon,
+            rule_ids,
+            suggested.get(f.content_hash, ()) if f.content_hash else (),
+            decisions.get(f.file_id, {}),
+        )
+    return found

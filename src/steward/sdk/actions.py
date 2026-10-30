@@ -48,6 +48,14 @@ LibraryPath = Annotated[str, PathField()]
 NodeKind = Literal["file", "dir", "absent"]
 AiMode = Literal["auto", "proposal"]
 
+SIDECAR_SUFFIX = ".xmp"
+"""A sidecar is `<name of its file>.xmp`, next to the file. Moving, renaming or deleting a
+file takes its sidecar along."""
+
+
+def is_sidecar(name: str) -> bool:
+    return name.lower().endswith(SIDECAR_SUFFIX)
+
 
 class ActionRefused(Exception):
     """The action isn't allowed (bad path, not writable, collision, preconditions not
@@ -328,6 +336,7 @@ EXAMPLE_TREE: Mapping[str, str | None] = {
     "docs/b.md": "# bravo\n",
     "docs/nested/c.txt": "charlie\n",
     "photos/p.jpg": "\xff\xd8\xff fake jpeg",
+    "photos/p.jpg.xmp": "<x:xmpmeta/>",
     "empty": None,
 }
 """The library (`lib`) the executor-safety tests build for `examples()`: relative path ->

@@ -8,6 +8,7 @@ any release (with a CHANGELOG entry); from 1.0, breaking it needs a major versio
 
 from steward.sdk.actions import (
     EXAMPLE_TREE,
+    SIDECAR_SUFFIX,
     ActionFailed,
     ActionRefused,
     ActionType,
@@ -23,6 +24,7 @@ from steward.sdk.actions import (
     Plan,
     ReadOnlyFS,
     Rendered,
+    is_sidecar,
 )
 from steward.sdk.events import Event, EventHandler
 from steward.sdk.health import HealthCheck, HealthResult, HealthStatus
@@ -34,6 +36,13 @@ from steward.sdk.jobs import (
     Lane,
     PermanentJobError,
     RetryLater,
+)
+from steward.sdk.library import (
+    ActionOutcome,
+    ActionRunner,
+    LibraryAccess,
+    LibraryFile,
+    LibraryPage,
 )
 from steward.sdk.models import (
     Message,
@@ -115,13 +124,16 @@ __all__ = [
     "LANES",
     "MATCH_MARKERS",
     "MODULE_NAME_PATTERN",
+    "SIDECAR_SUFFIX",
     "TAGS_ARTIFACT",
     "TOKEN_PATTERN",
     "WORKER_LANES",
     "ActionDone",
     "ActionFailed",
+    "ActionOutcome",
     "ActionPreview",
     "ActionRefused",
+    "ActionRunner",
     "ActionType",
     "Actions",
     "AiMode",
@@ -159,7 +171,10 @@ __all__ = [
     "JobType",
     "KindPage",
     "Lane",
+    "LibraryAccess",
+    "LibraryFile",
     "LibraryInfo",
+    "LibraryPage",
     "LibraryPath",
     "LinkBuilder",
     "LockedFolder",
@@ -215,5 +230,6 @@ __all__ = [
     "Web",
     "WebDep",
     "When",
+    "is_sidecar",
     "utcnow",
 ]

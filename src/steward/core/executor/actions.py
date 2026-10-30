@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from steward.core.executor.guarded import UPLOAD_PREFIX, content_hash, within
 from steward.sdk import (
+    SIDECAR_SUFFIX,
     ActionRefused,
     AiMode,
     Applied,
@@ -236,6 +237,16 @@ def _cleanup(params: BaseModel) -> tuple[str, ...]:
     return tuple(getattr(params, "remove_empty", ()))
 
 
+def _sidecar(view: ReadOnlyFS, source: PathState) -> PathState | None:
+    """The XMP sidecar next to the file `source`, if there is one. It moves with the file
+    (also ones other programs wrote): left behind, it would keep a photo's tags and
+    description in the open after the photo moved into a locked folder."""
+    if source.kind != "file":
+        return None
+    state = view.state(source.path + SIDECAR_SUFFIX)
+    return state if state.kind == "file" else None
+
+
 def _move_plan(
     name: str, params: BaseModel, source: str, destination: str, view: ReadOnlyFS, summary: str
 ) -> Plan:
@@ -244,17 +255,35 @@ def _move_plan(
     if source.partition(":")[2] == "":
         raise ActionRefused("a library root can't be moved")
     src = _existing(view, source)
+    preconditions = [src, _absent(view, destination)]
+    pair: tuple[str, ...] = ()
+    if (sidecar := _sidecar(view, src)) is not None:
+        target = destination + SIDECAR_SUFFIX
+        preconditions += [sidecar, _absent(view, target)]
+        pair = (sidecar.path, target)
     return Plan(
         name,
         params.model_dump(mode="json"),
         summary,
-        preconditions=(src, _absent(view, destination)),
-        reads=(source,),
-        writes=(source, destination, *_cleanup(params)),
+        preconditions=tuple(preconditions),
+        reads=(source, *pair[:1]),
+        writes=(source, destination, *pair, *_cleanup(params)),
+        data={"sidecar": list(pair)} if pair else {},
     )
 
 
+def _move_with_sidecar(
+    plan: Plan, fs: GuardedFS, source: str, destination: str, *, parents: bool
+) -> list[str]:
+    """The sidecar goes first: if either move can't work (another disk, say), nothing has
+    moved yet."""
+    pair = plan.data.get("sidecar")
+    created = fs.move(pair[0], pair[1], parents=parents) if pair else []
+    return created + fs.move(source, destination, parents=parents)
+
+
 def _moved(
+    plan: Plan,
     source: str,
     destination: str,
     fs: GuardedFS,
@@ -268,18 +297,28 @@ def _moved(
         except ActionRefused:
             continue  # not empty any more: keep it
         removed.append(folder)
+    moves = [(source, destination)]
+    result = {"source": source, "destination": destination, "created": created, "removed": removed}
+    if pair := plan.data.get("sidecar"):
+        moves.append((pair[0], pair[1]))
+        result["sidecar"] = list(pair)
     return Applied(
-        {"source": source, "destination": destination, "created": created, "removed": removed},
-        post=(PathState(source, "absent"), fs.state(destination)),
-        moves=((source, destination),),
-        changed=(source, destination, *removed),
+        result,
+        post=tuple(p for s, d in moves for p in (PathState(s, "absent"), fs.state(d))),
+        moves=tuple(moves),
+        changed=(*(p for move in moves for p in move), *removed),
     )
 
 
 def _move_back(applied: Applied) -> Plan:
     source, destination = applied.result["source"], applied.result["destination"]
-    after = next(p for p in applied.post if p.path == destination)
+    after = {p.path: p for p in applied.post}
     created = list(reversed(applied.result.get("created", [])))
+    preconditions = [after[destination], PathState(source, "absent")]
+    pair: tuple[str, ...] = ()
+    if sidecar := applied.result.get("sidecar"):
+        preconditions += [after[sidecar[1]], PathState(sidecar[0], "absent")]
+        pair = (sidecar[1], sidecar[0])
     return Plan(
         Move.name,
         {
@@ -289,9 +328,10 @@ def _move_back(applied: Applied) -> Plan:
             "remove_empty": created,
         },
         f"Move {destination} back to {source}",
-        preconditions=(after, PathState(source, "absent")),
-        reads=(destination,),
-        writes=(destination, source, *created),
+        preconditions=tuple(preconditions),
+        reads=(destination, *pair[:1]),
+        writes=(destination, source, *pair, *created),
+        data={"sidecar": list(pair)} if pair else {},
     )
 
 
@@ -312,8 +352,8 @@ class Move(_Action):
 
     def apply(self, plan: Plan, fs: GuardedFS) -> Applied:
         p = MoveParams.model_validate(plan.params)
-        created = fs.move(p.source, p.destination, parents=p.parents)
-        return _moved(p.source, p.destination, fs, created, tuple(p.remove_empty))
+        created = _move_with_sidecar(plan, fs, p.source, p.destination, parents=p.parents)
+        return _moved(plan, p.source, p.destination, fs, created, tuple(p.remove_empty))
 
     def inverse(self, plan: Plan, applied: Applied, view: ReadOnlyFS) -> Plan | None:
         return _move_back(applied)
@@ -322,6 +362,7 @@ class Move(_Action):
         return [
             {"source": "lib:docs/a.txt", "destination": "lib:photos/a.txt"},
             {"source": "lib:docs/nested", "destination": "lib:moved/nested", "parents": True},
+            {"source": "lib:photos/p.jpg", "destination": "lib:moved/p.jpg", "parents": True},
         ]
 
 
@@ -356,8 +397,8 @@ class Rename(_Action):
     def apply(self, plan: Plan, fs: GuardedFS) -> Applied:
         p = RenameParams.model_validate(plan.params)
         destination = _join(_parent(p.path), p.new_name)
-        fs.move(p.path, destination)
-        return _moved(p.path, destination, fs, [])
+        _move_with_sidecar(plan, fs, p.path, destination, parents=False)
+        return _moved(plan, p.path, destination, fs, [])
 
     def inverse(self, plan: Plan, applied: Applied, view: ReadOnlyFS) -> Plan | None:
         return _move_back(applied)
@@ -366,6 +407,7 @@ class Rename(_Action):
         return [
             {"path": "lib:docs/b.md", "new_name": "renamed.md"},
             {"path": "lib:docs/nested", "new_name": "deeper"},
+            {"path": "lib:photos/p.jpg", "new_name": "renamed.jpg"},
         ]
 
 
@@ -392,18 +434,25 @@ class Delete(_Action):
         root = view.trash_folder(f"{library}:")
         day = view.now().strftime("%Y-%m-%d")
         destination = view.free_name(_join(trash, f"{day}/{relpath}"))
+        preconditions = [source, PathState(destination, "absent")]
+        pair: tuple[str, ...] = ()
+        if (sidecar := _sidecar(view, source)) is not None:
+            target = view.free_name(destination + SIDECAR_SUFFIX)
+            preconditions += [sidecar, PathState(target, "absent")]
+            pair = (sidecar.path, target)
         return Plan(
             self.name,
             params.model_dump(mode="json"),
             f"Move {params.path} to the trash",
-            preconditions=(source, PathState(destination, "absent")),
-            reads=(params.path,),
-            writes=(params.path, root),
+            preconditions=tuple(preconditions),
+            reads=(params.path, *pair[:1]),
+            writes=(params.path, *pair[:1], root),
             data={
                 "trash": trash,
                 "destination": destination,
                 "locked_trash": view.settings(params.path).locked,
                 "trash_root": root,
+                **({"sidecar": list(pair)} if pair else {}),
             },
         )
 
@@ -418,8 +467,8 @@ class Delete(_Action):
             if fs.state(trash).kind == "absent":
                 fs.mkdir(trash, parents=True, mode=0o700)
             fs.set_lock(trash, True)
-        created = fs.move(p.path, destination, parents=True)
-        return _moved(p.path, destination, fs, created)
+        created = _move_with_sidecar(plan, fs, p.path, destination, parents=True)
+        return _moved(plan, p.path, destination, fs, created)
 
     def inverse(self, plan: Plan, applied: Applied, view: ReadOnlyFS) -> Plan | None:
         undo = _move_back(applied)
@@ -430,10 +479,15 @@ class Delete(_Action):
             preconditions=undo.preconditions,
             reads=undo.reads,
             writes=undo.writes,
+            data=undo.data,
         )
 
     def examples(self) -> list[dict[str, Any]]:
-        return [{"path": "lib:docs/a.txt"}, {"path": "lib:docs/nested"}]
+        return [
+            {"path": "lib:docs/a.txt"},
+            {"path": "lib:docs/nested"},
+            {"path": "lib:photos/p.jpg"},
+        ]
 
 
 # --- file content ------------------------------------------------------------------------

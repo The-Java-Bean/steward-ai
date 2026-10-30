@@ -13,24 +13,33 @@ Stages:
   description, so photos are found by words and by meaning like documents. Without a
   model mapped to `caption` the stage doesn't run.
 
-Built only on `steward.sdk`. Originals are never changed; XMP sidecars come later.
+Job `photos.sidecars` (`executor` lane, every 15 minutes) writes tags and descriptions to
+XMP sidecars with the action `photos.sidecar_sync`, for photos in folders whose type has
+`sidecars` (`media`). Needs `exiftool`; other programs' sidecars are merged, not
+overwritten (docs/adr/0026).
+
+Built only on `steward.sdk`. Originals are never changed.
 """
 
 from __future__ import annotations
 
 import shutil
+from datetime import timedelta
 from functools import partial
+from pathlib import Path
 from typing import ClassVar, cast
 
 from pydantic import Field
 
-from steward.modules.photos import caption, exif, images
+from steward.modules.photos import caption, exif, images, sidecars
 from steward.sdk import (
     BlobInfo,
+    Every,
     FileInfo,
     FolderInfo,
     HealthResult,
     IsolationError,
+    JobContext,
     ModuleConfig,
     ModuleKind,
     Registry,
@@ -39,10 +48,13 @@ from steward.sdk import (
     TextPart,
 )
 
+HERE = Path(__file__).parent
 MIB = 1024 * 1024
+SIDECARS_EVERY = timedelta(minutes=15)
 EXIF_VERSION = 1
 CAPTION_VERSION = 1
 EXIF_STAGE = "photos.exif"
+SIDECAR_JOB = "photos.sidecars"
 ROLE = "caption"
 CAPTION = "text:caption"
 
@@ -82,6 +94,16 @@ class PhotosConfig(ModuleConfig):
     caption_timeout_s: int = Field(60, ge=5, le=3600)
     """Wall-clock time decoding and scaling one image may take."""
     caption_memory_mib: int = Field(1024, ge=256, le=65536)
+    sidecars: bool = True
+    """Write XMP sidecars in folders whose type has `sidecars` (needs `exiftool`)."""
+    sidecar_batch: int = Field(50, ge=1, le=500)
+    """Most sidecars written in one go (the write lock is held that long)."""
+    sidecar_run_limit: int = Field(2000, ge=1, le=100_000)
+    """Most sidecars written per run, so a first back-fill doesn't occupy the lane."""
+    sidecar_max_kib: int = Field(1024, ge=16, le=65536)
+    """Larger existing sidecars are left alone."""
+    sidecar_timeout_s: int = Field(60, ge=5, le=600)
+    """Time one exiftool run over a batch may take (plus a second per sidecar)."""
 
 
 def _exif_version() -> int:
@@ -100,14 +122,17 @@ def _isolation_reason(exc: IsolationError) -> str:
 
 class PhotosModule:
     name: ClassVar[str] = "photos"
-    version: ClassVar[str] = "0.1.0"
+    version: ClassVar[str] = "0.2.0"
     kind: ClassVar[ModuleKind] = "feature"
     requires: ClassVar[tuple[str, ...]] = ()
     config_model: ClassVar[type[ModuleConfig] | None] = PhotosConfig
 
     def register(self, r: Registry) -> None:
         config = r.config if isinstance(r.config, PhotosConfig) else PhotosConfig()
-        command = shutil.which(config.exif_command) if config.exif else None
+        exiftool = shutil.which(config.exif_command)
+        command = exiftool if config.exif else None
+        r.migrations(HERE / "migrations" / "state")
+        r.exporter(sidecars.export)
 
         def exif_applies(blob: BlobInfo, file: FileInfo, folder: FolderInfo) -> bool:
             return blob.kind in ("image", "video")
@@ -154,6 +179,23 @@ class PhotosModule:
                 index="metadata",
             )
         r.health_check(EXIF_STAGE, exif_health)
+
+        if config.sidecars and exiftool is not None:
+            syncer_of = partial(
+                sidecars.Syncer,
+                exiftool,
+                config.sidecar_batch,
+                config.sidecar_run_limit,
+                config.sidecar_max_kib * 1024,
+                config.sidecar_timeout_s,
+            )
+
+            def sync(ctx: JobContext) -> None:
+                syncer_of().run(ctx)
+
+            r.action(sidecars.SidecarSync())
+            r.job(SIDECAR_JOB, sync, lane="executor")
+            r.schedule(SIDECAR_JOB, Every(SIDECARS_EVERY), job=SIDECAR_JOB)
 
         if not config.captions:
             return

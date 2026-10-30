@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from steward.core import events, queue, scheduler, stages
 from steward.core.db import utcnow
 from steward.core.discovery.ioprio import set_idle_io_priority
+from steward.core.library import Library, ModuleActions
 from steward.core.runtime import Runtime
 from steward.sdk import WORKER_LANES, JobContext, Lane, PermanentJobError, RetryLater
 
@@ -77,7 +78,20 @@ class Worker:
                 if not queue.renew(conn, job.job_id, worker_id=self.worker_id, lease=self.lease):
                     log.warning("lost the lease on a running job", extra={"fields": fields})
 
-        ctx = JobContext(job.job_id, job.type, job.payload, job.attempts, renew_lease, state)
+        ctx = JobContext(
+            job.job_id,
+            job.type,
+            job.payload,
+            job.attempts,
+            renew_lease,
+            state,
+            library=Library(self.runtime.dbs, self.runtime.privacy),
+            actions=(
+                ModuleActions(self.runtime.executor, job.type.partition(".")[0])
+                if lane == "executor"
+                else None
+            ),
+        )
         try:
             self.job_types[job.type].handler(ctx)
         except RetryLater as exc:

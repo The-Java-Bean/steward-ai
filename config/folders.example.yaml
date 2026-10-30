@@ -15,6 +15,11 @@ types:
   scans:
     extends: documents
     stages: {add: [ocr]}
+  albums:
+    extends: media             # media types write XMP sidecars for photos
+  # screenshots:
+  #   extends: media
+  #   sidecars: false
   # documents:                 # change a built-in type's settings (no `extends`)
   #   hash: sampled
 

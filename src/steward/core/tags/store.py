@@ -10,7 +10,7 @@ an alias points at a tag that isn't an alias (renames and merges repoint).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -28,6 +28,8 @@ USABLE: tuple[TagStatus, ...] = ("active", "ai-created")
 VOCABULARY_CHANGED = "tag.vocabulary_changed"
 """Emitted when a tag became usable (created, accepted, activated)."""
 MAX_DESCRIPTION = 500
+BATCH = 500
+"""Most ids in one `IN (...)` list."""
 
 FileState = Literal["added", "removed"]
 
@@ -434,6 +436,19 @@ def file_rows(conn: Connection, file_id: str) -> dict[int, FileState]:
     }
 
 
+def file_rows_of(conn: Connection, file_ids: Sequence[str]) -> dict[str, dict[int, FileState]]:
+    """file_id -> tag_id -> your decision."""
+    found: dict[str, dict[int, FileState]] = {}
+    for start in range(0, len(file_ids), BATCH):
+        for r in conn.execute(
+            select(file_tags.c.file_id, file_tags.c.tag_id, file_tags.c.state).where(
+                file_tags.c.file_id.in_(file_ids[start : start + BATCH])
+            )
+        ):
+            found.setdefault(r.file_id, {})[r.tag_id] = cast(FileState, r.state)
+    return found
+
+
 def set_file(
     conn: Connection,
     file_id: str,
@@ -491,3 +506,17 @@ def suggestions(conn: Connection, content_hash: str) -> list[int]:
             select(tag_suggestions.c.tag_id).where(tag_suggestions.c.content_hash == content_hash)
         ).scalars()
     )
+
+
+def suggestions_of(conn: Connection, hashes: Sequence[str]) -> dict[str, list[int]]:
+    """content hash -> what the AI chose for it."""
+    unique = list(dict.fromkeys(hashes))
+    found: dict[str, list[int]] = {}
+    for start in range(0, len(unique), BATCH):
+        for r in conn.execute(
+            select(tag_suggestions.c.content_hash, tag_suggestions.c.tag_id).where(
+                tag_suggestions.c.content_hash.in_(unique[start : start + BATCH])
+            )
+        ):
+            found.setdefault(r.content_hash, []).append(r.tag_id)
+    return found

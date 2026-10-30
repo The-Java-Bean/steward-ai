@@ -215,6 +215,20 @@ class ReadOnlyView:
         except _Missing:
             return PathState(target.path, "absent")
 
+    def read(self, path: str, *, max_bytes: int) -> bytes:
+        target = self.target(path)
+        with open_dir(target.library.root, target.parts[:-1]) as fd:
+            fd_in = _open_file(fd, target)
+            try:
+                data = b""
+                while len(data) <= max_bytes and (chunk := os.read(fd_in, CHUNK)):
+                    data += chunk
+            finally:
+                os.close(fd_in)
+        if len(data) > max_bytes:
+            raise ActionRefused(f"{target.path} is larger than {max_bytes} bytes")
+        return data
+
     def file_id(self, path: str) -> str | None:
         target = self.target(path)
         with self.state_db.read() as conn:
@@ -419,20 +433,6 @@ class Guarded(ReadOnlyView):
                     os.unlink(temp, dir_fd=fd)
                 raise
             _fsync_dir(fd)
-
-    def read(self, path: str, *, max_bytes: int) -> bytes:
-        target = self.target(path)
-        with open_dir(target.library.root, target.parts[:-1]) as fd:
-            fd_in = _open_file(fd, target)
-            try:
-                data = b""
-                while len(data) <= max_bytes and (chunk := os.read(fd_in, CHUNK)):
-                    data += chunk
-            finally:
-                os.close(fd_in)
-        if len(data) > max_bytes:
-            raise ActionRefused(f"{target.path} is larger than {max_bytes} bytes")
-        return data
 
     # --- folder settings (applied with the journal entry) ---------------------------
 
