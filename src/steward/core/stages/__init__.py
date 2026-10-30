@@ -9,16 +9,18 @@ from steward.core.stages.jobs import (
     complete_spaces,
     enqueue_full_pass,
     full_pass_needed,
+    plan_pending,
     register_hash_stage,
     register_stage_jobs,
     rerun,
     tick,
 )
-from steward.core.stages.planner import Planner, stage_job_type
+from steward.core.stages.planner import STAGE_JOB_PREFIX, Planner, stage_job_type
 
 __all__ = [
     "FULL_JOB",
     "PLAN_JOB",
+    "STAGE_JOB_PREFIX",
     "Planner",
     "StageGraph",
     "StageGraphError",
@@ -26,6 +28,7 @@ __all__ = [
     "complete_spaces",
     "enqueue_full_pass",
     "full_pass_needed",
+    "plan_pending",
     "register_hash_stage",
     "register_stage_jobs",
     "rerun",

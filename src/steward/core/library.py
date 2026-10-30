@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from steward.core import reindex
 from steward.core.db import Databases
 from steward.core.db.schema import events, stage_runs
 from steward.core.executor import Executor
@@ -62,6 +63,10 @@ class Library:
         with self.dbs.index.read() as index:
             run = index.execute(select(func.max(stage_runs.c.updated_at))).scalar()
         return f"{event}:{run}"
+
+    def rebuilding(self) -> bool:
+        with self.dbs.state.read() as conn:
+            return reindex.rebuilding(conn)
 
     def files(
         self,

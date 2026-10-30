@@ -109,6 +109,7 @@ def test_a_stage_gets_structured_answers_through_the_gateway(tmp_path: Path) -> 
             assert (run.status, run.model) == ("done", "summary=fake-chat")
             first, retry = server.chats()
             assert first["response_format"]["type"] == "json_schema"
+            assert first["temperature"] == 0
             assert first["model"] == "fake-chat"
             assert "topic: Input should be a valid string" in retry["messages"][-1]["content"]
             skipped = status_of(runtime, "b.txt")

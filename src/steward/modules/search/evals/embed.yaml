@@ -1,0 +1,46 @@
+# Made-up passages for `steward eval embed`. No real people, companies or accounts.
+# Queries say the same thing as their passage in other words on purpose; a word search
+# wouldn't find them. `unrelated` queries have no answer here.
+documents:
+  plumber: "Our kitchen faucet kept dripping, so Stonebridge Plumbing replaced the washer and the valve."
+  lease: "The tenant pays rent on the first day of each month and gives two months' notice before moving out."
+  vaccine: "Your cat is due for its annual booster shot at the veterinary clinic in April."
+  roof: "Six cracked tiles need replacing and the gutter over the back door is leaking."
+  sourdough: "Fold the dough every thirty minutes, leave it overnight, and bake in a very hot oven with steam."
+  insurance: "The policy covers flood and fire damage to the building, but not gradual wear."
+  payslip: "Net pay after income tax and pension contributions was credited to your account on the 28th."
+  train: "The 8:15 service to Examplecity leaves from platform four and has a quiet coach."
+  solar: "The panels on the south-facing slope generated more electricity than the household used in July."
+  bees: "Inspect the hive every week in spring and add a super before the colony runs out of room."
+  dentist: "A filling was placed in the upper left molar; avoid chewing on that side for a day."
+  telescope: "Align the finder scope in daylight on a distant chimney before you try to find Saturn."
+  budget: "We spent less on groceries this quarter, though the heating costs went up in the cold spell."
+  wifi: "If the router's light blinks orange, unplug it for ten seconds and wait for a steady green."
+  allotment: "Plant the broad beans in November and pinch out the tips once the first pods appear."
+  passport: "Applications for a new passport take six weeks, so allow extra time before you travel."
+  bike: "The rear brake pads were worn down, so the mechanic fitted a new set and adjusted the cable."
+  wedding: "The ceremony starts at two in the walled garden, with dinner and dancing in the barn after."
+  recycling: "Glass goes out on alternate Tuesdays; cardboard has to be flattened and left by the gate."
+  tax: "You can deduct the cost of tools you needed for your job from your taxable income."
+queries:
+  - {id: leaky-tap, query: "who fixed the leak under the sink", expect: [plumber]}
+  - {id: moving-out, query: "how long before I leave the flat do I have to tell the landlord", expect: [lease]}
+  - {id: pet-jab, query: "when does the kitten need its injection", expect: [vaccine]}
+  - {id: roof-damage, query: "broken roofing and water coming in near the door", expect: [roof]}
+  - {id: bread, query: "instructions for baking a crusty loaf", expect: [sourdough]}
+  - {id: flood-cover, query: "am I insured if the river floods the house", expect: [insurance]}
+  - {id: salary, query: "how much did I take home from my wages", expect: [payslip]}
+  - {id: commute, query: "morning rail departure time", expect: [train]}
+  - {id: renewable, query: "energy from the rooftop system in summer", expect: [solar]}
+  - {id: honey, query: "looking after a honey bee colony", expect: [bees]}
+  - {id: tooth, query: "treatment for a cavity in my tooth", expect: [dentist]}
+  - {id: stargazing, query: "setting up equipment to look at planets", expect: [telescope]}
+  - {id: internet-down, query: "the internet isn't working, what should I restart", expect: [wifi]}
+  - {id: vegetables, query: "when to sow vegetables in the garden plot", expect: [allotment]}
+  - {id: bins, query: "which day do the bins get collected", expect: [recycling]}
+  - {id: cycle-repair, query: "bicycle stopping problems fixed at the shop", expect: [bike]}
+unrelated:
+  - {id: quantum, query: "the mathematics of quantum error correction codes"}
+  - {id: football, query: "who won the league final on penalties"}
+  - {id: volcano, query: "lava flows during a volcanic eruption in Iceland"}
+  - {id: opera, query: "the second act of an Italian opera"}

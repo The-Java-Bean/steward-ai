@@ -77,7 +77,7 @@ class StageModel(Protocol):
         self, schema: type[M], messages: Sequence[Message], *, retries: int = 2
     ) -> M:
         """An answer validated against `schema`, using the strongest method the role
-        supports (JSON schema, JSON mode, or instructions in the prompt). A validation
-        error is sent back to the model up to `retries` times; then
-        `StructuredOutputError`."""
+        supports (JSON schema, JSON mode, or instructions in the prompt), at temperature 0
+        so that the same input gives the same answer. A validation error is sent back to
+        the model up to `retries` times; then `StructuredOutputError`."""
         ...

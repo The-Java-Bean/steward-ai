@@ -19,7 +19,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from steward.core import events, queue, scheduler, stages
+from steward.core import events, queue, reindex, scheduler, stages
 from steward.core.db import utcnow
 from steward.core.discovery.ioprio import set_idle_io_priority
 from steward.core.library import Library, ModuleActions
@@ -63,7 +63,7 @@ class Worker:
             job = queue.claim(
                 conn,
                 lane=lane,
-                types=self.types_by_lane.get(lane, ()),
+                types=reindex.claimable(conn, self.types_by_lane.get(lane, ())),
                 worker_id=self.worker_id,
                 lease=self.lease,
                 now=now,
@@ -155,6 +155,7 @@ class Worker:
         for name in fired:
             log.info("schedule fired", extra={"fields": {"schedule": name}})
         stages.complete_spaces(self.runtime.dbs, self.runtime.stages, now=now)
+        reindex.settle(self.runtime.dbs)
 
     def drain(self, *, max_jobs: int = 10_000) -> int:
         """Housekeeping, then run jobs on every lane until none are runnable. Synchronous;

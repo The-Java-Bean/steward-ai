@@ -26,6 +26,7 @@ from steward.sdk.actions import (
     Rendered,
     is_sidecar,
 )
+from steward.sdk.evals import EvalCaseResult, EvalModel, EvalRun, EvalSuite
 from steward.sdk.events import Event, EventHandler
 from steward.sdk.health import HealthCheck, HealthResult, HealthStatus
 from steward.sdk.jobs import (
@@ -147,6 +148,10 @@ __all__ = [
     "Database",
     "Entry",
     "EntryKind",
+    "EvalCaseResult",
+    "EvalModel",
+    "EvalRun",
+    "EvalSuite",
     "Event",
     "EventHandler",
     "Every",

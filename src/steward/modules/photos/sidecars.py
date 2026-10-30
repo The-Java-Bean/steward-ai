@@ -491,6 +491,8 @@ class Syncer:
         library, actions = ctx.library, ctx.actions
         if library is None or actions is None:
             raise PermanentJobError(f"{ctx.type} has to run on the executor lane")
+        if library.rebuilding():
+            return  # tags and descriptions not recomputed yet would look deleted
         revision = library.revision()
         with ctx.state.read() as conn:
             last = conn.execute(select(runs.c.revision)).scalar_one_or_none()

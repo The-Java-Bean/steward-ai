@@ -30,6 +30,9 @@ _THINK = re.compile(r"<think>.*?</think>", re.S)
 _FENCE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n?(.*?)\n?```$", re.S)
 _NAME = re.compile(r"[^a-zA-Z0-9_-]")
 MAX_ERRORS = 10
+TEMPERATURE = 0
+"""Structured answers are read off a document, not written: the same file should give the
+same tags and fields. At the model's default, 5 of 69 files changed tags on a re-run."""
 
 
 def instruction(schema: type[BaseModel], *, with_schema: bool) -> str:
@@ -44,7 +47,7 @@ def instruction(schema: type[BaseModel], *, with_schema: bool) -> str:
 def first_request(
     role: RoleConfig, schema: type[BaseModel], messages: Sequence[Message]
 ) -> ChatRequest:
-    options: dict[str, Any] = {}
+    options: dict[str, Any] = {"temperature": TEMPERATURE}
     if role.structured == "json_schema":
         options["response_format"] = {
             "type": "json_schema",

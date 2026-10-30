@@ -81,6 +81,8 @@ class ScanReport:
     files_reappeared: int = 0
     files_missing: int = 0
     files_unchanged: int = 0
+    files_restored: int = 0
+    """Unchanged files read again because `index.db` had lost their content (a rebuild)."""
     folders_new: int = 0
     folders_moved: int = 0
     folders_missing: int = 0
@@ -394,6 +396,7 @@ class Scanner:
                 r.relpath: r
                 for r in conn.execute(select(files).where(*_under(files, library_id, scope)))
             }
+        lost = self._lost_blobs({r.content_hash for r in rows.values() if r.content_hash})
         unchanged: list[str] = []
         for relpath, disk in sorted(walk.files.items()):
             row = rows.get(relpath)
@@ -407,19 +410,26 @@ class Scanner:
                 self._tick()
                 continue
             if row is not None and _same(row, disk) and _hash_ok(row, disk):
-                if row.present:
+                if row.content_hash in lost:
+                    if self._restore(root / relpath, row, disk, report):
+                        lost.discard(row.content_hash)
+                elif row.present:
                     unchanged.append(row.file_id)
                     report.files_unchanged += 1
                     if len(unchanged) >= BATCH:
                         self._touch(unchanged)
                         unchanged = []
                     continue
-                self._reappeared(row, disk, None, report)
+                else:
+                    self._reappeared(row, disk, None, report)
             elif row is not None:
                 result = self._hash(root / relpath, disk, report)
                 if result is None:
                     if self._last_error is not None:
                         self._record_error(row.file_id, self._last_error)
+                elif row.present and row.content_hash in lost and _same_hash(row, result):
+                    self._reindexed(row, disk, result, report)
+                    lost.discard(row.content_hash)
                 elif row.present:
                     self._changed(row, disk, result, report)
                 else:
@@ -428,6 +438,47 @@ class Scanner:
                 self._new_path(policy, library_id, root, relpath, disk, report)
             self._tick()
         self._touch(unchanged)
+
+    def _lost_blobs(self, hashes: set[str]) -> set[str]:
+        """Those of `hashes` that `index.db` has no blob for: it was deleted, rebuilt or
+        restored from an older backup. Nothing else would ever bring them back, because a
+        scan doesn't read unchanged files and the planner skips content without a blob."""
+        known: set[str] = set()
+        ordered = sorted(hashes)
+        with self.dbs.index.read() as conn:
+            for i in range(0, len(ordered), BATCH):
+                batch = ordered[i : i + BATCH]
+                known.update(
+                    conn.execute(
+                        select(blobs.c.content_hash).where(blobs.c.content_hash.in_(batch))
+                    ).scalars()
+                )
+        return hashes - known
+
+    def _restore(self, path: Path, row: Any, disk: _DiskFile, report: ScanReport) -> bool:
+        """Read an unchanged file again to put its blob back, and announce it so the
+        planner runs its stages. Returns whether the blob is back."""
+        result = self._hash(path, disk, report)
+        if result is None:
+            if self._last_error is not None:
+                self._record_error(row.file_id, self._last_error)
+            return False
+        if not row.present:
+            self._reappeared(row, disk, result, report)
+        elif _same_hash(row, result):
+            self._reindexed(row, disk, result, report)
+        else:
+            self._changed(row, disk, result, report)
+        return _same_hash(row, result)
+
+    def _reindexed(self, row: Any, disk: _DiskFile, result: HashResult, report: ScanReport) -> None:
+        now = self.clock()
+        with self.dbs.state.write() as conn:
+            self._update_row(conn, row.file_id, disk, result, now)
+            self._emit(
+                conn, "file.reindexed", row.file_id, row.library_id, row.relpath, result, now
+            )
+        report.files_restored += 1
 
     def _excluded_file(
         self,
@@ -839,6 +890,10 @@ class Scanner:
 
 def _same(row: Any, disk: _DiskFile) -> bool:
     return (row.size, row.mtime_ns, row.inode) == (disk.size, disk.mtime_ns, disk.inode)
+
+
+def _same_hash(row: Any, result: HashResult) -> bool:
+    return bool(row.content_hash == result.content_hash)
 
 
 def _hash_ok(row: Any, disk: _DiskFile) -> bool:

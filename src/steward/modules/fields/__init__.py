@@ -16,11 +16,13 @@ Built only on `steward.sdk`.
 
 from __future__ import annotations
 
+from functools import partial
+from pathlib import Path
 from typing import ClassVar
 
 from pydantic import Field
 
-from steward.modules.fields import extract
+from steward.modules.fields import extract, scoring
 from steward.sdk import (
     BlobInfo,
     FileInfo,
@@ -32,6 +34,7 @@ from steward.sdk import (
     StageResult,
 )
 
+HERE = Path(__file__).parent
 STAGE = "fields.extract"
 ROLE = "fields"
 ARTIFACT = "fields"
@@ -101,4 +104,11 @@ class FieldsModule:
             lane="llm-local",
             applies_to=applies,
             roles=(ROLE,),
+        )
+        r.eval_suite(
+            ROLE,
+            partial(scoring.run, max_value_chars=config.max_value_chars),
+            cases=HERE / "evals" / "fields.yaml",
+            primary="accuracy",
+            prompt=extract.PROMPT_NAME,
         )

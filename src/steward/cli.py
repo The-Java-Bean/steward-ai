@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import signal
+import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,7 +20,7 @@ from sqlalchemy import func, select
 
 import steward
 from steward.core import auth as steward_auth
-from steward.core import backup, content, queue, stages
+from steward.core import backup, content, evals, queue, reindex, stages
 from steward.core import logging as steward_logging
 from steward.core.builtin import tag_stage
 from steward.core.config import (
@@ -56,7 +57,7 @@ from steward.core.tags import bootstrap as tag_bootstrap
 from steward.core.tags import effective as tag_effective
 from steward.core.tags import io as tag_io
 from steward.core.tags import store as tag_store
-from steward.sdk import ActionRefused, ModelUnavailable
+from steward.sdk import ActionRefused, EvalCaseResult, ModelUnavailable
 
 app = typer.Typer(
     name="steward",
@@ -264,6 +265,12 @@ def worker() -> None:
     if stages.full_pass_needed(runtime.dbs, runtime.stages):
         with runtime.dbs.state.write() as conn:
             stages.enqueue_full_pass(conn, max_attempts=runtime.config.pipeline.jobs.max_attempts)
+    if reindex.lost(runtime.dbs):
+        typer.echo("index.db has none of the files' content; rebuilding it", err=True)
+        with runtime.dbs.state.write() as conn:
+            reindex.request(
+                conn, actor="system", max_attempts=runtime.config.pipeline.jobs.max_attempts
+            )
     watcher_thread = None
     if discovery.watch:
         watcher = Watcher(
@@ -1268,6 +1275,148 @@ def tags_retag(
     """Have tags chosen again (in the background, by `steward serve`/`worker`)."""
     runtime = _ready_runtime()
     typer.echo(f"{_retag(runtime, everything=all_files)} result(s) dropped; tagging runs again")
+
+
+@app.command("reindex")
+def reindex_command(
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask.")] = False,
+    status: Annotated[
+        bool, typer.Option("--status", help="Show progress; change nothing.")
+    ] = False,
+    no_backup: Annotated[
+        bool, typer.Option("--no-backup", help="Skip the backup taken first.")
+    ] = False,
+) -> None:
+    """Rebuild the index from your libraries. It's safe with the API and worker running;
+    the worker does the work. Text is extracted again and every model result is computed
+    again (a model may answer differently). Your tags, folders, journal and shares aren't
+    touched. If index.db is lost or damaged: stop the API and worker, delete index.db and
+    its -wal and -shm files, run this, start them again."""
+    runtime = _runtime()
+    if status:
+        runtime = _ready_runtime()
+        found = reindex.summary(runtime.dbs, runtime.stages)
+        counts = f"{found.indexed} of {found.contents} contents indexed"
+        if found.rebuilding:
+            typer.echo(
+                f"rebuilding since {_when(found.since)}: {counts}, {found.jobs_left} jobs left, "
+                f"{found.failed} failed"
+            )
+        else:
+            typer.echo(f"not rebuilding: {counts}, {found.failed} failed")
+        return
+    index = runtime.dbs.index
+    stale = reindex.stale_journal(index)
+    if stale:
+        _fail(
+            f"index.db is gone but {' and '.join(stale)} are still there. Stop the API and "
+            "worker first; if they're stopped, delete those files too"
+        )
+    existed = index.exists()
+    try:
+        if not existed and runtime.dbs.state.exists():
+            migrate.upgrade(index, runtime.migration_owners("index"))
+        runtime.ensure_databases_current()
+    except migrate.MigrationError as exc:
+        _fail(str(exc))
+    found = reindex.summary(runtime.dbs, runtime.stages)
+    if found.rebuilding:
+        _fail("a rebuild is already running; see `steward reindex --status`")
+    typer.echo(f"This empties index.db and rebuilds it from {found.contents} contents.")
+    typer.echo("state.db isn't touched: your tags, folders, journal and shares stay.")
+    for stage, count in found.results.items():
+        if stage not in found.not_running:
+            typer.echo(f"  computed again: {stage} ({count})")
+    for stage, reason in found.not_running.items():
+        typer.echo(f"  LOST until it runs again: {stage} ({found.results[stage]}): {reason}")
+    if not yes:
+        typer.confirm("Rebuild the index?", abort=True)
+    if existed and not no_backup:
+        try:
+            info = backup.backup(runtime, reason="pre-reindex")
+        except (backup.BackupError, OSError, sqlite3.Error) as exc:
+            _fail(f"the backup failed ({exc}); --no-backup goes ahead without one")
+        typer.echo(f"backup: {info.path}")
+    with runtime.dbs.state.write() as conn:
+        job_id = reindex.request(
+            conn, actor="cli", max_attempts=runtime.config.pipeline.jobs.max_attempts
+        )
+    typer.echo(f"queued {reindex.REBUILD_JOB} (job {job_id}); the worker rebuilds the index")
+    typer.echo("follow it with `steward reindex --status`")
+
+
+def _show_eval(run: evals.EvalRecord, against: evals.EvalRecord | None) -> bool:
+    """Print a run's scores; returns whether a metric regressed."""
+    typer.echo(f"{run.role}: {run.model}, prompt {run.prompt or '-'}, {run.cases} cases")
+    if against is not None and against.set_hash != run.set_hash:
+        typer.echo("  the eval set changed since the baseline, so there's nothing to compare")
+    changes = evals.compare(run, against)
+    for change in changes:
+        line = f"  {change.metric:<20} {change.score:.3f}"
+        if change.delta is not None:
+            line += f"  baseline {change.baseline:.3f}  ({change.delta:+.3f})"
+            line += "  WORSE" if change.regressed else ""
+        typer.echo(line)
+    if run.failed:
+        typer.echo(f"  failed: {', '.join(run.failed)}")
+    typer.echo(f"  took {run.seconds:.0f} s")
+    return any(change.regressed for change in changes)
+
+
+@app.command("eval")
+def eval_command(
+    role: Annotated[
+        str | None, typer.Argument(help="The role to score; without one, list the suites.")
+    ] = None,
+    save_baseline: Annotated[
+        bool, typer.Option("--baseline", help="Make this run the one others compare with.")
+    ] = False,
+    show_history: Annotated[bool, typer.Option("--history", help="Show past runs.")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show each case.")] = False,
+) -> None:
+    """Score the model behind a role on labeled examples made for the project, and
+    compare with the baseline. Exits 1 if a score fell. Compare before you change a model
+    or a prompt."""
+    runtime = _ready_runtime()
+    suites = runtime.registrations.eval_suites()
+    if role is None:
+        if not suites:
+            typer.echo("no enabled module has an eval set")
+        with runtime.dbs.state.read() as conn:
+            for name, suite in sorted(suites.items()):
+                state = runtime.stages.roles.get(name)
+                model = state.model if state and state.model else "not mapped"
+                best = evals.baseline(conn, name)
+                score = f"{best.metrics.get(suite.primary, 0):.3f}" if best else "none"
+                typer.echo(f"{name} ({suite.module}): {model}; baseline {suite.primary} {score}")
+        return
+    if show_history:
+        with runtime.dbs.state.read() as conn:
+            runs = evals.history(conn, role)
+        for run in runs:
+            mark = "  baseline" if run.baseline else ""
+            scores = ", ".join(f"{k} {v:.3f}" for k, v in run.metrics.items())
+            typer.echo(f"{_when(run.created_at)}  {run.model}  {run.prompt}  {scores}{mark}")
+        return
+
+    def progress(result: EvalCaseResult) -> None:
+        if verbose:
+            mark = "ok  " if result.passed else "FAIL"
+            typer.echo(f"  {mark}  {result.case}  {result.note}".rstrip())
+
+    try:
+        run = evals.run_suite(runtime, role, on_case=progress)
+    except (evals.EvalError, ModelUnavailable) as exc:
+        _fail(str(exc))
+    with runtime.dbs.state.write() as conn:
+        against = evals.baseline(conn, role)
+        if save_baseline:
+            evals.set_baseline(conn, run.run_id)
+    regressed = _show_eval(run, against)
+    if save_baseline:
+        typer.echo("  saved as the baseline")
+    elif regressed:
+        raise typer.Exit(1)
 
 
 @app.command("backup")

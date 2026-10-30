@@ -1,0 +1,51 @@
+# Images for `steward eval caption`, drawn at run time by `scoring.py` (`draw`). `must`:
+# each entry lists words of which one has to appear; `never`: words that would be made up.
+cases:
+  - id: red-circle
+    draw: red_circle
+    must: [[red], [circle, circular, round, disc, disk, dot, sphere, ball]]
+    never: [person, people, man, woman, face]
+  - id: shapes
+    draw: shapes
+    must: [[blue], [yellow], [square, rectangle], [triangle, triangular]]
+    never: [person, people, man, woman]
+  - id: bar-chart
+    draw: bar_chart
+    must: [[chart, graph, diagram, histogram], [bar, bars, column, columns], [sales]]
+    never: [person, people, man, woman]
+  - id: pie-chart
+    draw: pie_chart
+    must: [[pie, circular, donut, sector, sectors, segments, slices, wedges]]
+    never: [person, people, man, woman]
+  - id: document
+    draw: document
+    must: [[invoice], [document, page, form, receipt, bill, scan, scanned, paper], [total]]
+    never: [person, people, man, woman]
+  - id: stop-sign
+    draw: stop_sign
+    must: [[stop], [sign, signage, signpost], [red]]
+    never: [person, people, man, woman, car, cars]
+  - id: sunset
+    draw: sunset
+    must: [[sun, sunset, sunrise, dusk], [sea, ocean, water, lake, horizon]]
+    never: [person, people, man, woman, boat]
+  - id: night
+    draw: night
+    must: [[moon], [night, dark, nighttime, night-time], [star, stars, starry]]
+    never: [person, people, man, woman, city]
+  - id: screenshot
+    draw: screenshot
+    must: [[settings], [screenshot, window, interface, application, app, dialog, menu, ui]]
+    never: [person, people, man, woman]
+  - id: house
+    draw: house
+    must: [[house, home, cottage, building], [tree, trees], [drawing, illustration, cartoon, simple, graphic, painting, picture, image]]
+    never: [person, people, man, woman, car]
+  - id: checkerboard
+    draw: checkerboard
+    must: [[black], [white], [checkerboard, checkered, chequered, checker, chessboard, grid, squares, square, chess]]
+    never: [person, people, man, woman]
+  - id: open-sign
+    draw: open_sign
+    must: [[open], [sign, signage, plaque, board, banner, placard]]
+    never: [person, people, man, woman, closed]

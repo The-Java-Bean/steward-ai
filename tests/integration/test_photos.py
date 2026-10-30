@@ -304,7 +304,7 @@ def test_photos_are_described_and_found_by_words_and_meaning(
     assert run.model == "caption=fake-vision"
     chat = server.chats()[0]
     assert chat["model"] == "fake-vision"
-    assert chat["temperature"] == 0.2
+    assert chat["temperature"] == 0
     with env.runtime.dbs.index.read() as conn:
         rows = conn.execute(
             select(chunks.c.body, chunks.c.source).where(

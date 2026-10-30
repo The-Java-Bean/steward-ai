@@ -31,7 +31,7 @@ from typing import ClassVar, cast
 
 from pydantic import Field
 
-from steward.modules.photos import caption, exif, images, sidecars
+from steward.modules.photos import caption, exif, images, scoring, sidecars
 from steward.sdk import (
     BlobInfo,
     Every,
@@ -226,7 +226,7 @@ class PhotosModule:
                 return StageResult("skipped", _isolation_reason(exc))
             answer = ctx.model(ROLE).chat(
                 caption.messages(jpeg),
-                options={"temperature": 0.2, "max_tokens": config.caption_max_tokens},
+                options={"temperature": 0, "max_tokens": config.caption_max_tokens},
             )
             text = caption.clean(answer, config.caption_max_chars)
             ctx.write_text([TextPart(text)] if text else [], artifact=CAPTION)
@@ -245,4 +245,16 @@ class PhotosModule:
             lane="llm-local",
             applies_to=caption_applies,
             roles=(ROLE,),
+        )
+        r.eval_suite(
+            ROLE,
+            partial(
+                scoring.run,
+                max_side=config.caption_max_side,
+                max_tokens=config.caption_max_tokens,
+                max_chars=config.caption_max_chars,
+            ),
+            cases=HERE / "evals" / "caption.yaml",
+            primary="concepts",
+            prompt=caption.PROMPT_NAME,
         )

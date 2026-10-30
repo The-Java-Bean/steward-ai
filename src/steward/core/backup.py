@@ -54,6 +54,7 @@ CORE_EXPORT_TABLES: dict[str, tuple[str, ...]] = {
     "tags": (),
     "file_tags": (),
     "journal": (),
+    "eval_runs": (),
     "settings_kv": (),
     "users": ("password_hash",),
     "api_tokens": ("secret_hash",),
@@ -216,12 +217,14 @@ def backup(runtime: Runtime, *, reason: str = "manual", keep: int | None = None)
 
 
 def runtime_status(runtime: Runtime, database: str) -> list[Any]:
+    from steward.core import reindex
     from steward.core.db import migrate
 
     db = runtime.database(database)  # type: ignore[arg-type]
     if not db.exists():
         return []
-    return migrate.status(db, runtime.migration_owners(database))  # type: ignore[arg-type]
+    with reindex.naming_recovery(database):
+        return migrate.status(db, runtime.migration_owners(database))  # type: ignore[arg-type]
 
 
 def list_backups(directory: Path) -> list[BackupInfo]:

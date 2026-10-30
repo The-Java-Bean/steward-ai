@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
     text,
 )
 
@@ -600,3 +601,23 @@ file_tags = Table(
 )
 """Your decisions about a file's tags: `added`, or `removed` (a tag the AI or a folder
 type gave it that you took off). Effective tags are computed (`core.tags.effective`)."""
+
+# --- evals (state revision 0008) ------------------------------------------------------
+
+eval_runs = Table(
+    "eval_runs",
+    state_metadata,
+    Column("run_id", Integer, primary_key=True, autoincrement=True),
+    Column("role", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("prompt", Text, nullable=False),
+    Column("set_hash", Text, nullable=False),
+    Column("cases", Integer, nullable=False),
+    Column("metrics", JSON, nullable=False),
+    Column("failed", JSON, nullable=False),
+    Column("seconds", Float, nullable=False),
+    Column("baseline", Boolean, nullable=False, server_default=false()),
+    Column("created_at", UTCDateTime, nullable=False),
+    Index("ix_eval_runs_role", "role", "run_id"),
+)
+"""`steward eval` results: scores and failed case ids, never model output."""

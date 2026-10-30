@@ -25,7 +25,7 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from steward.modules.tags import apply
+from steward.modules.tags import apply, scoring
 from steward.modules.tags.routes import PAGE, router
 from steward.sdk import (
     TAGS_ARTIFACT,
@@ -131,6 +131,13 @@ class TagsModule:
             lane="llm-local",
             applies_to=applies,
             roles=(ROLE,),
+        )
+        r.eval_suite(
+            ROLE,
+            scoring.run,
+            cases=HERE / "evals" / "apply_tags.yaml",
+            primary="f1",
+            prompt=apply.PROMPT_NAME,
         )
         r.ui_page(
             "tags.page",

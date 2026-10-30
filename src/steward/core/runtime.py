@@ -33,6 +33,7 @@ from steward.core.loader import (
     resolve_enabled,
 )
 from steward.core.privacy import PrivacyRules
+from steward.core.reindex import naming_recovery, register_reindex
 from steward.core.scheduler import effective_schedules
 from steward.core.stages import Planner, StageGraph, build_graph, register_stage_jobs
 from steward.sdk import Database as DatabaseName
@@ -94,14 +95,16 @@ class Runtime:
         return self.dbs.state if name == "state" else self.dbs.index
 
     def upgrade_databases(self) -> dict[str, list[str]]:
-        return {
-            name: migrate.upgrade(self.database(name), self.migration_owners(name))
-            for name in ("state", "index")
-        }
+        changed = {}
+        for name in ("state", "index"):
+            with naming_recovery(name):
+                changed[name] = migrate.upgrade(self.database(name), self.migration_owners(name))
+        return changed
 
     def ensure_databases_current(self) -> None:
         for name in ("state", "index"):
-            migrate.ensure_current(self.database(name), self.migration_owners(name))
+            with naming_recovery(name):
+                migrate.ensure_current(self.database(name), self.migration_owners(name))
 
     def close(self) -> None:
         self.dbs.dispose()
@@ -137,6 +140,7 @@ def build_runtime(
         modules.registrations, dbs, stages, config, lambda: built[0].gateway
     )
     register_models(modules.registrations, lambda: built[0])
+    register_reindex(modules.registrations, dbs, config)
     try:
         schedules = effective_schedules(
             modules.registrations.schedules(), config.pipeline.schedules

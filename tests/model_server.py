@@ -57,6 +57,8 @@ class FakeModelServer:
         self.dims = dims
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.replies: list[Reply] = []
+        self.default: Reply = "ok"
+        """The answer once `replies` runs out."""
         self.status: int | None = None
         """Answer every request with this HTTP status instead (e.g. 500)."""
         self._server: ThreadingHTTPServer | None = None
@@ -98,7 +100,7 @@ class FakeModelServer:
                     self._send(200, {"object": "list", "data": data})
                 elif self.path.endswith("/chat/completions"):
                     with owner._lock:
-                        reply = owner.replies.pop(0) if owner.replies else "ok"
+                        reply = owner.replies.pop(0) if owner.replies else owner.default
                     answer = reply(body) if callable(reply) else reply
                     message = answer if isinstance(answer, dict) else {"content": answer}
                     self._send(

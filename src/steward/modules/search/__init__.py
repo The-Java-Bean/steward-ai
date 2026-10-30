@@ -15,12 +15,15 @@ background.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 from pydantic import Field
 
+from steward.modules.search import scoring
 from steward.sdk import ModuleConfig, ModuleKind, Registry, StageContext, StageResult
 
+HERE = Path(__file__).parent
 EMBED_VERSION = 1
 ROLE = "embed"
 
@@ -74,3 +77,4 @@ class SearchModule:
             lane="llm-local",
             roles=(ROLE,),
         )
+        r.eval_suite(ROLE, scoring.run, cases=HERE / "evals" / "embed.yaml", primary="recall_at_3")

@@ -49,6 +49,11 @@ class LibraryAccess(Protocol):
         the last time; read it *before* looking at anything."""
         ...
 
+    def rebuilding(self) -> bool:
+        """The index is being rebuilt (`steward reindex`), so stage results may be missing
+        that will be back later. A job that would act on something being absent waits."""
+        ...
+
     def files(
         self,
         *,

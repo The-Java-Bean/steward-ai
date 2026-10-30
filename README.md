@@ -510,6 +510,42 @@ in your regular off-site backups. To restore, stop steward-ai and copy `state.db
 Locking and the login protect what steward-ai shows; they don't protect files from
 someone with shell or disk access to the server.
 
+### Rebuilding the index *(implemented)*
+`index.db` holds what can be worked out again from your files: text, chunks, embeddings,
+descriptions, fields and the AI's tag suggestions. Your own tag decisions, settings and
+history are in `state.db`, which a rebuild doesn't touch.
+
+```sh
+steward reindex             # says what will happen, asks, backs up, rebuilds
+steward reindex --status    # how far it got
+```
+
+It works with steward-ai running: search keeps answering (results fill up again), and for
+a few minutes on a big index other background work waits. Every file is read and every
+model runs again, so a large library takes as long as the first time. Results from a
+model that isn't mapped any more don't come back; the command lists those first. Sidecars
+aren't touched until the rebuild is over.
+
+If `index.db` is lost or damaged: stop steward-ai, delete `index.db`, `index.db-wal` and
+`index.db-shm`, run `steward reindex`, start it again. A worker that finds the index gone
+starts a rebuild by itself. Restoring an older `index.db` is fine too: the next full scan
+fills in what's missing.
+
+### Checking models *(implemented)*
+```sh
+steward eval                  # the roles that have a set, with their baselines
+steward eval apply_tags       # score the model behind a role, compare with the baseline
+steward eval fields --verbose # also show each case
+steward eval caption --baseline   # remember this run as the one to compare with
+steward eval embed --history
+```
+
+Each set is a small collection of made-up examples with known answers, run through the
+same prompts indexing uses. Run one after changing a model, or after an update, before
+trusting a new model with your library. The command exits with 1 if a score fell by more
+than 0.05. Scores are stored; what the model answered isn't. Reference scores are in
+[ADR 0027](docs/adr/0027-evals.md).
+
 ### Development
 You need [uv](https://docs.astral.sh/uv/) and `make` (Docker for the image).
 
@@ -551,7 +587,7 @@ steps, log). Read them first if present. A maintainer-only design document
 (`plan.md`, untracked) is the authoritative design if present.
 
 ### Current status
-- **Phase 3 (indexing and tagging): in progress, six chunks (plan §19).** Chunk 1 done:
+- **Phase 3 (indexing and tagging): all seven chunks done (plan §19).** Chunk 1:
   the core content index (`texts`, `chunks`, FTS5) written through `StageContext`,
   isolated parsing (`run_isolated`), the `documents` module (extract + chunk), and
   full-text search merged with name search (ADR 0021). Chunk 2 done: optional stage
@@ -570,7 +606,9 @@ steps, log). Read them first if present. A maintainer-only design document
   the `tags` module (`tags.apply`, `/ui/tags`), tags in the file manager, `steward
   tags …`, bootstrap (ADR 0025). Chunk 6 done: XMP sidecars (`photos.sidecars`,
   `photos.sidecar_sync`), `JobContext.library`/`.actions`, sidecars moving with files
-  (ADR 0026). Next (plan §19, seven chunks): 7 evals/reindex/acceptance.
+  (ADR 0026). Chunk 7 done: `steward reindex`, scanner repair, `steward eval` with
+  sets shipped in modules, acceptance tests on two layouts (ADRs 0027, 0028). Phase 3 is
+  complete; next is Phase 4 (chat and AI actions).
 - **Phase 2 (files, Locked Folder, shares): all 5 chunks done** (1: module web SDK +
   `files_ui` file manager, ADR 0017; 2: resumable uploads, ADR 0018; 3: the Locked
   Folder `/ui/locked`, ADR 0019; 4: share links, the `shares` module and the core `/s/`
@@ -639,6 +677,8 @@ steps, log). Read them first if present. A maintainer-only design document
 | `src/steward/core/privacy/` | `rules.py` `matches(relpath, pattern)`, `PrivacyRules` (`from_config`, `is_secret`, `level_for`); `classify.py` `Classifier` (`load(conn, rules)`, `for_path`, `for_files`) → `FileClass(sensitivity, locked, visible, shareable, known)`, `UNKNOWN`; `overrides.py` `set_override(conn, file_id, level|None, actor=)` (event `file.sensitivity_changed`); `sharing.py` `SharingRules(policy, rules, overrides by (lib, relpath))` (`load(conn, policy, rules)`, cached `check(lib, relpath)` → `PathPrivacy`: path judged as file (parent settings) and folder (own), `Visibility.is_hidden`, rules, overrides; reasons), `HIDDEN` |
 | `src/steward/core/llm/` | `transport.py` `ChatRequest`, `EmbedRequest` (both with `timeout_s` override), `ModelResponse`, `ModelTransport`, `OpenAICompatibleTransport` (stdlib urllib); `gateway.py` `Gateway(config, state_db, privacy, transport, clock=)` `.route(role)`, `.call(role, request, provenance=, purpose=, taint=, allow_local_fallback=)` → `GatewayResult` (circuit breaker per endpoint: `down_for`, `_mark_down`, 30 s doubling to 900 s, `_down` dict), `.role_config(role)`; `model_key(role_cfg, embed=)` (`model` or `model|dims|sha8(document_prefix)`); `PrivacyViolation`, `RoleNotConfigured`, `check_llm_config` (refuses remote endpoints for now); `roles.py` `resolve_roles(declared, llm_config)` → `{role: RoleState(name, kind, description, modules, vision, endpoint, model, problem, model_key; usable)}`, `RoleDeclarationError` (kinds disagree); `structured.py` `run(send, role_cfg, schema, messages, retries=)`, `first_request`, `clean` (think blocks, fences, outer braces), `describe` (errors without input); `probe.py` `probe_role(gateway, role, kind)` → `Check`s, `red_png`. Only this package may use `urllib`/`openai`; `gateway.with_reasoning(request, role_cfg)` adds `reasoning_effort` to chat requests when the role's `reasoning` isn't `default` (applied in `Gateway.call` for the routed role) |
 | `src/steward/core/embeddings.py` | Embedding spaces (ADR 0023): `pack` (L2-normalized little-endian float32, rejects empty/zero/non-finite, ≤16384 dims), `unpack`, `Space`, `spaces`, `find_space(conn, role, model_key)`, `ensure_space(conn, role=, mapping=, model_key=, dims=)` (dims must match), `write(conn, hash, space=, source=, vectors=)` (one per chunk of `source` in seq order, replaces the content's rows in that space), `count`, `load_vec(sqlite3_conn)` (sqlite-vec; False if extensions can't load), `VectorQuery(space_id, vector, min_similarity, depth=50)`, `QueryEmbedder(dbs, gateway, roles)` (`Runtime.query_embedder`; first usable embed role with a space for its current key; `query_prefix`, 15 s timeout, LRU 128; raises `ModelUnavailable`), `EmbeddingError` |
+| `src/steward/core/reindex.py` | Rebuilding `index.db` in place (`request`, `reset`, `settle`, `claimable`, `lost`, `summary`, job `core.index.rebuild`) |
+| `src/steward/core/evals.py` | `steward eval`: `run_suite`, baselines, `compare`, `EvalModelHandle`; `sdk/evals.py` has the types modules use |
 | `src/steward/core/search.py` | `search_files` (names), `search_text` (FTS5 over `idx.chunks_fts`, best chunk per content via `_MATCHES` (min `rank`, bare columns), `_snippets` with `MATCH_MARKERS` → `split_snippet` → `Snippet` segments), `search_all(..., mode="all"|"names"|"text", embed=)` (RRF over names (`all` only), FTS and vectors (`_NEAREST`: min `vec_distance_cosine` per content in the space, scope `where` + `dist <= 1 - min_similarity`, top `depth`); `_query_vector` never raises (→ `semantic` False); vector-only hits get `_previews` (chunk start) and `SearchHit.semantic`; `SearchResults.semantic` None/True/False; `RRF_K` 60, `RANK_CAP` 1000, total from one OR query; `Embed` type); all share `_conditions(policy, filters, scope)`; `fts_query(words)` (each word quoted; None without alnum); `SearchHit` has `snippet`, `page`; `Mode`; signature `search_files(dbs, policy, query, filters=SearchFilters(...), scope="normal"|"locked", limit=, offset=)` → `SearchResults(hits, total, capped)` (locked scope = locked folders minus `concealed`); raw read-only `sqlite3` with `index.db` attached as `idx`, SQL functions `steward_fold`/`steward_name` (NFC + casefold); `hidden_folders(policy)`, `_folder_sets`, `Visibility(policy)` (`hidden`, `locked`, `concealed` = hidden for non-lock reasons; `is_hidden`, `is_locked`, `in_locked_view`, `locked_roots()`, `path_hidden`, `path_locked`) used by listings, the journal and `/api/v1`; `SearchError` |
 | `src/steward/core/backup.py` | `backup(runtime, reason=, keep=)` → `BackupInfo` (online-backup copies of both DBs, `state.json`, `manifest.json`, `.partial-` then rename, 0600, prune), `export_state(runtime, strict=)` (`CORE_EXPORT_TABLES` minus secret columns + module exporters), `list_backups`, `latest_backup`, `prune`, `before_migrate(runtime)` (pending revision on existing DBs and no backup within `max_age_before_migrate_hours` → back up or raise `BackupError`) |
 | `src/steward/api/security.py` | The guard (app-wide dependency): `access(level)` decorator for core routes (`public`, `setup`, `session` default, `principal`), `level_of`, `ApiState(auth, api, trusted_proxies, setup_token)` (`has_owner` cached once true), `guard` (sets `request.state.principal/session_secret/csrf/presession/ip/https`), refusals `Refused(status, message)`, `NeedLogin`, `SetupRequired`, `SetupClosed`; `safe_next`, `is_https`; cookie names `steward_session`, `steward_setup`, `steward_presession` |
@@ -1001,8 +1041,8 @@ steps, log). Read them first if present. A maintainer-only design document
   so keep explicit entries for anything a stage keys on.
 - `LockedEnv` (`tests/locked_support.py`) now loads `documents` and drains the worker
   once, so the locked-route walk also covers text search.
-- Not yet: an `Extractor` extension point, pruning text of blobs no file has,
-  `steward reindex`, a per-file "indexing status" view.
+- Not yet: an `Extractor` extension point, pruning text of blobs no file has, a per-file
+  "indexing status" view.
 
 ### OCR and optional stage inputs (implemented; ADR 0022)
 - SDK: `Stage.optional` / `Registry.stage(optional=)`; `FolderInfo.stages_added` +
@@ -1142,6 +1182,29 @@ steps, log). Read them first if present. A maintainer-only design document
 - Not yet: tags in listings and `/api/v1/files/{id}`, AI tag tools
   (Phase 4), `tag-gen` (Phase 6), vocabulary import from the UI.
 
+### Reindex (implemented; ADR 0028)
+`core/reindex.py`: `request` sets `index.rebuild` in `settings_kv` and queues
+`core.index.rebuild` (`cpu`). The job calls `reset` (empties every data table of `index.db`
+in one transaction, found with `PRAGMA table_list`; triggers dropped and recreated; FTS
+`delete-all`; children first by `foreign_key_list`; `alembic_version_*` stay), then queues
+scans (dedupe `reindex:<library>`) and a full pass. `claimable` (called from
+`Worker.run_one`) lets only the rebuild job start while `emptying` is set; `_keep_lease`
+renews from a thread. `settle` (worker housekeeping) clears the mark when `_busy` is 0 and
+`stages.plan_pending` is false. `lost` = hashed files but no blobs; `cli.worker` requests a
+rebuild then. `stale_journal` = `-wal`/`-shm` without `index.db`. `summary` for the
+command and `--status`. Scanner: `_lost_blobs` per batch, `_restore`, `_reindexed`
+(`file.reindexed`, in `FILE_EVENTS`), `ScanReport.files_restored`. `Library.rebuilding()`
+pauses `photos.sidecars`.
+
+### Evals (implemented; ADR 0027)
+`sdk/evals.py` (`EvalSuite`, `EvalRun`, `EvalModel`, `EvalCaseResult`),
+`Registry.eval_suite`, `core/evals.py` (`run_suite`, `compare`, `baseline`, `history`,
+`EvalModelHandle`). Sets are `modules/<name>/evals/<role>.yaml`, scoring in
+`modules/<name>/scoring.py` (a module can't have both `evals.py` and `evals/`). The photo
+set is drawn at run time (`scoring.DRAWINGS`). `eval_runs` in `state.db` (revision `0008`):
+metrics and failed case ids, never model output. `REGRESSION = 0.05`; only runs with the
+same set hash are compared. Baselines are per role and move with `--baseline`.
+
 ### Jobs, events, schedules, migrations (implemented; ADRs 0007, 0008)
 - State tables (core revision `0001`): `jobs`, `events`, `event_cursors`, `schedules`;
   version tables `alembic_version_<owner>`.
@@ -1255,7 +1318,7 @@ Typer, pytest + hypothesis, ruff, mypy, import-linter.
 1. ~~Core~~ *(done)*: config, DBs, queue, events, libraries/folder types, discovery, auth, setup
    wizard, privacy gateway, executor + journal, keyword search, backup/export.
 2. ~~File manager, Locked Folder, built-in shares~~ *(done: module web SDK + `files_ui`, resumable uploads, Locked Folder, share links, acceptance tests)*.
-3. Indexing and tagging *(in progress: content index, `documents`, full-text search, OCR, model roles, embeddings + hybrid search, `photos`, `fields`, `tags`, XMP sidecars done; next evals, reindex, acceptance)*: documents, search, fields, tags, photos.
+3. ~~Indexing and tagging~~ *(done: content index, `documents`, full-text search, OCR, model roles, embeddings + hybrid search, photos, fields, tags, XMP sidecars, evals, reindex)*.
 4. Chat and AI actions (agent, built-in chat, proposals, triage, `openai_api`, `openwebui`).
 5. Integrations (`immich`).
 6. Background intelligence (`tag_gen`, `dedupe`, `digest`).
@@ -1274,6 +1337,8 @@ uv run steward tokens list | create LABEL --scope read | revoke ID
 uv run steward search WORDS [--in all|names|text] | files text LIB:PATH   # search; extracted text
 uv run steward models list | models probe [ROLE]     # model roles; test the mapped models
 uv run steward tags list | import F | export | bootstrap | add|remove LIB:PATH TAG | retag [--all]
+uv run steward reindex [--yes] [--no-backup] | reindex --status   # rebuild index.db
+uv run steward eval [ROLE] [--baseline] [--history] [--verbose]   # score a role's model
 uv run steward journal list | journal undo ID | files sensitivity LIB:PATH LEVEL
 uv run steward backup | export --output F            # backups (also nightly + before migrations)
 make check                      # lint typecheck imports test headers licenses

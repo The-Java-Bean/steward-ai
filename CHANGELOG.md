@@ -7,6 +7,17 @@ All notable changes to steward-ai are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `steward reindex` rebuilds `index.db` from the libraries with the API and worker running
+  (`--status`, `--yes`, `--no-backup`), after a `pre-reindex` backup. A full scan now also
+  repairs a lost or older `index.db`, and a worker that finds the index gone starts a
+  rebuild by itself. Health check `core.index` (ADR 0028).
+- `steward eval [role]` scores the model behind a role on labeled, fictional examples
+  shipped with each module, and compares with a stored baseline (`--baseline`,
+  `--history`, `--verbose`; exit 1 on a drop over 0.05). Sets: `fields`, `apply_tags`,
+  `embed`, `caption`. State migration `0008` (`eval_runs`, also in backups) (ADR 0027).
+- SDK: `Registry.eval_suite`, `EvalSuite`, `EvalRun`, `EvalModel`, `EvalCaseResult`;
+  `LibraryAccess.rebuilding()`; core file event `file.reindexed`.
+- Acceptance tests for Phase 3, on two folder layouts (`tests/acceptance/test_phase3.py`).
 - XMP sidecars: the `photos` module writes tags and descriptions to `<photo>.xmp` for
   photos in folders whose type has the new `sidecars` setting (on for `media`), merging
   with what other programs wrote (needs exiftool; `sidecars: false` turns it off). Job
@@ -16,6 +27,10 @@ All notable changes to steward-ai are recorded here. The format follows
   `SIDECAR_SUFFIX`, `is_sidecar`.
 
 ### Changed
+- Structured model answers (fields, tags) and photo descriptions use temperature 0, so the
+  same file gets the same result, also after rebuilding the index.
+- Scans read a file again, even if unchanged, when the index has lost its content.
+- `photos.sidecars` waits while the index is being rebuilt.
 - `file.move`, `file.rename` and `file.delete` of a file take its `.xmp` sidecar along
   (undo too); a sidecar already at the destination refuses the move.
 - `.xmp` files are `application/rdf+xml` (kind `other`), so they aren't indexed. A sidecar

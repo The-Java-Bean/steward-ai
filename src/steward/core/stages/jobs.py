@@ -74,7 +74,13 @@ SIGNATURE_KEY = "stage_graph_signature"
 EVENT_BATCH = 1000
 ERROR_MAX = 500
 
-FILE_EVENTS = ("file.discovered", "file.changed", "file.moved", "file.reappeared")
+FILE_EVENTS = (
+    "file.discovered",
+    "file.changed",
+    "file.moved",
+    "file.reappeared",
+    "file.reindexed",
+)
 FULL_PASS_EVENTS = (
     "folder.type_changed",
     "folder.moved",
@@ -189,6 +195,18 @@ def tick(conn: Connection, *, max_attempts: int = 5, now: datetime | None = None
     if latest is not None and latest > cursor:
         _set_cursor(conn, latest, now)
     return False
+
+
+def plan_pending(conn: Connection) -> bool:
+    """Whether events the planner still has to look at exist."""
+    return (
+        conn.execute(
+            select(events.c.event_id)
+            .where(events.c.event_id > (_cursor(conn) or 0), events.c.type.in_(RELEVANT_EVENTS))
+            .limit(1)
+        ).scalar()
+        is not None
+    )
 
 
 def enqueue_full_pass(conn: Connection, *, max_attempts: int = 5) -> int:

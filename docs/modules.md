@@ -81,10 +81,11 @@ Every name a module registers is the module's name or starts with `<module>.`
 |---|---|
 | `health_check(name, check)` | an `async def` returning `HealthResult("ok" \| "warn" \| "fail", detail)` |
 | `job(name, handler, lane=...)` | a background job type; `handler(ctx: JobContext)` runs in a worker thread |
-| `subscribe(event_type, handler, name=...)` | a reaction to events such as `file.discovered`; `handler(event: Event)` (core file events: `file.discovered`, `file.changed`, `file.moved`, `file.reappeared`, `file.missing`; payloads hold `file_id`, `library_id`, `relpath` and, once hashed, `content_hash`, `size`, `mime`) |
+| `subscribe(event_type, handler, name=...)` | a reaction to events such as `file.discovered`; `handler(event: Event)` (core file events: `file.discovered`, `file.changed`, `file.reindexed`, `file.moved`, `file.reappeared`, `file.missing`; payloads hold `file_id`, `library_id`, `relpath` and, once hashed, `content_hash`, `size`, `mime`) |
 | `schedule(name, Every(...) \| Daily(...), job=..., payload=...)` | a recurring job; owners can re-time or turn it off in `pipeline.yaml` |
 | `stage(name, run, version=, produces=, requires=, optional=, lane=, applies_to=, default=, index=, roles=)` | a pipeline stage; see "Stages" below |
 | `model_role(role, kind="chat" \| "embed", description=, vision=False)` | a model role your stages call (names are shared, not prefixed); see "Model roles" below |
+| `eval_suite(role, run, cases=, primary=, prompt=)` | labeled examples for `steward eval <role>`; see "Eval suites" below |
 | `migrations(path, database="state" \| "index")` | a directory of Alembic revisions creating `<module>_*` tables |
 | `ui_page(name, router, path=, title=, nav=True, templates=, static=, badge=)` | a web UI page: a FastAPI `APIRouter` mounted at `path` (`/ui/<slug>`), optionally with Jinja2 templates and static files; `badge(state) -> int` puts a count next to its navigation entry; see "UI pages" below |
 | `share_links(handler)` | answer the public share links `/s/<token>…` (one module at most); see "Share links" below |
@@ -354,6 +355,39 @@ def register(r: Registry) -> None:
   searches the current one.
 - In your own job handlers, raise `RetryLater(reason, delay_s=)` to run the job again
   later without using up an attempt.
+
+### Eval suites
+
+A role with a prompt should have a suite, so the owner can see what a model or prompt
+change does ([ADR 0027](adr/0027-evals.md)). Keep the set inside your package, so it ships
+with it, and call your real prompt, schema and cleaning, so that a score is about what
+indexing does:
+
+```python
+from pathlib import Path
+
+from steward.sdk import EvalCaseResult, Registry
+
+CASES = Path(__file__).parent / "evals" / "summary.yaml"
+
+
+def run(data, model):
+    for case in data["cases"]:
+        answer = summarize(model, case["text"])  # what your stage calls
+        hit = 1.0 if case["word"] in answer else 0.0
+        yield EvalCaseResult(case["id"], {"recall": hit}, hit == 1.0, note=f"said {answer}")
+
+
+def register(r: Registry) -> None:
+    r.model_role("summary", kind="chat", description="Writes summaries")
+    r.eval_suite("summary", run, cases=CASES, primary="recall", prompt="summary.v1")
+```
+
+`model` is an `EvalModel`: `chat`, `structured` and `embed` like a stage's model, plus
+`embed_queries` (with the role's query prefix) and `min_similarity`. Metrics are numbers
+from 0 to 1 and are averaged over the cases that have them. Calls go through the gateway
+with no file provenance, so a set must be made up: no real people, addresses or documents.
+Results are stored without model output; `note` is shown by `--verbose` only.
 
 ## Actions
 

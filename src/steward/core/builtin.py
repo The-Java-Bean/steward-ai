@@ -149,7 +149,7 @@ def register_uploads(registrations: Registrations, runtime: Callable[[], Runtime
 def register_models(registrations: Registrations, runtime: Callable[[], Runtime]) -> None:
     """Health checks for model roles and embeddings (docs/adr/0023). Registered after
     the stage graph is built, because they report what it left out."""
-    from steward.core import embeddings
+    from steward.core import embeddings, reindex
 
     r = Registry("core", None, registrations)
 
@@ -188,8 +188,23 @@ def register_models(registrations: Registrations, runtime: Callable[[], Runtime]
                 parts.append(f"{state.name}: {n} passages embedded with {space.model} ({status})")
         return HealthResult("ok", "; ".join(parts))
 
+    async def index() -> HealthResult:
+        rt = runtime()
+        found = reindex.summary(rt.dbs, rt.stages)
+        counts = f"{found.indexed} of {found.contents} contents indexed"
+        if found.rebuilding:
+            return HealthResult(
+                "warn",
+                f"rebuilding the index: {counts}, {found.jobs_left} jobs left; search results "
+                "and tags are incomplete until it's done",
+            )
+        if found.contents > found.indexed:
+            return HealthResult("warn", f"{counts}; the next full scan restores the rest")
+        return HealthResult("ok", counts)
+
     r.health_check("core.models", models)
     r.health_check("core.embeddings", spaces)
+    r.health_check("core.index", index)
 
 
 RETAG_SUBSCRIBER = "core.tags.retag_untagged"

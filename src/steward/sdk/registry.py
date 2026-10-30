@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, get_args
 from sqlalchemy import Connection
 
 from steward.sdk.actions import ActionType
+from steward.sdk.evals import EvalRun, EvalSuite
 from steward.sdk.events import EventHandler
 from steward.sdk.health import HealthCheck
 from steward.sdk.jobs import LANES, WORKER_LANES, JobHandler, Lane
@@ -141,6 +142,14 @@ class Registrations:
 
     def actions(self) -> dict[str, ActionType]:
         return {e.name: cast(ActionType, e.item) for e in self.at("action")}
+
+    def eval_suites(self) -> dict[str, EvalSuite]:
+        """Role -> its eval suite (the first registered, if modules share a role)."""
+        found: dict[str, EvalSuite] = {}
+        for e in self.at("eval_suite"):
+            suite = cast(EvalSuite, e.item)
+            found.setdefault(suite.role, suite)
+        return found
 
     def exporters(self) -> dict[str, Exporter]:
         """Owner (`core` or a module name) -> exporter."""
@@ -350,6 +359,22 @@ class Registry:
             self._registrations.add(Registration("action", name, "core", action_type))
             return
         self._add("action", name, action_type)
+
+    def eval_suite(
+        self,
+        role: str,
+        run: EvalRun,
+        *,
+        cases: Path,
+        primary: str,
+        prompt: str = "",
+    ) -> None:
+        """Register how `steward eval <role>` scores a model for this module's work (see
+        `steward.sdk.evals`). `cases` is a YAML file the module ships."""
+        if not cases.is_file():
+            raise ValueError(f"eval suite {role!r}: cases {cases} isn't a file")
+        suite = EvalSuite(role, cases, run, primary, prompt, self._module)
+        self._add("eval_suite", f"{self._module}.{role}", suite)
 
     def exporter(self, export: Exporter) -> None:
         """Register this module's exporter: it returns every irreplaceable row the module
